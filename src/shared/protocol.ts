@@ -1,5 +1,6 @@
+import { validLook } from './career';
 import type { Game } from './engine';
-import { Ball, Difficulty, Execution, GameEvent, GameState, Mode, Phase, Player, SummaryRow } from './types';
+import { Ball, Difficulty, Execution, GameEvent, GameState, Hat, Mode, Phase, Player, STAT_KEYS, SummaryRow, Trail, emptyStats } from './types';
 
 const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
 
@@ -10,6 +11,8 @@ export type SlotKind = 'open' | 'human' | 'ai';
 export interface SlotInfo {
   kind: SlotKind;
   name: string;
+  /** Title earned by a signed-in commander ('' for guests). */
+  title: string;
   difficulty: Difficulty;
   faction: number;
   connected: boolean;
@@ -26,7 +29,8 @@ export interface LobbyInfo {
 // ----------------------------------------------------------- client -> server
 
 export type ClientMsg =
-  | { t: 'hello'; name: string; token: string; faction?: number }
+  /** `auth` is the account session token of a signed-in commander. */
+  | { t: 'hello'; name: string; token: string; faction?: number; auth?: string }
   | { t: 'slot'; slot: number; kind: 'ai' | 'open'; difficulty?: Difficulty }
   | { t: 'faction'; slot: number; faction: number }
   | { t: 'rounds'; rounds: number }
@@ -62,7 +66,8 @@ export interface TickMsg {
   ex: Execution | null;
   solo: number[] | null;
   pl: number[][];
-  pn?: [string, Difficulty, number][];
+  /** Names, skill, faction and cosmetics (title, hat, trail). */
+  pn?: [string, Difficulty, number, string, Hat, Trail][];
   /** Grid: idx/code pairs, or every code when gf is set. */
   g?: number[];
   gf?: 1;
@@ -74,6 +79,8 @@ export interface TickMsg {
   gr?: number[][];
   ev?: GameEvent[];
   sum?: SummaryRow[];
+  /** Every player's stats in STAT_KEYS order (sent with each phase change). */
+  st?: number[][];
 }
 
 export type ServerMsg =
@@ -82,6 +89,8 @@ export type ServerMsg =
   | { t: 'init'; you: number; map: StaticMap; state: TickMsg }
   | TickMsg
   | { t: 'pong'; c: number; time: number }
+  /** Honours (achievement ids) the finished game earned for your account. */
+  | { t: 'honours'; ids: string[] }
   | { t: 'error'; msg: string };
 
 // ------------------------------------------------------------------ encode
@@ -127,6 +136,7 @@ const encBall = (b: Ball) => [b.id, b.owner, b.cannon, r2(b.fx), r2(b.fy), r2(b.
 export class Encoder {
   private lastSummary: SummaryRow[] | null = null;
   private hadMobiles = false;
+  private statsPhase = '';
 
   constructor(private readonly game: Game) {}
 
@@ -185,6 +195,10 @@ export class Encoder {
     m.gr = s.grunts.map((g) => [g.id, g.x, g.y]);
   }
 
+  private stats(): number[][] {
+    return this.game.s.players.map((p) => STAT_KEYS.map((k) => p.stats[k]));
+  }
+
   private cannons(): number[][] {
     return this.game.s.cannons.map((c) => [c.id, c.owner, c.x, c.y, c.hp, c.active ? 1 : 0, r2(c.angle)]);
   }
@@ -193,7 +207,8 @@ export class Encoder {
     const g = this.game;
     const s = g.s;
     const m = this.base();
-    m.pn = s.players.map((p) => [p.name, p.difficulty, p.faction]);
+    m.pn = s.players.map((p) => [p.name, p.difficulty, p.faction, p.look.title, p.look.hat, p.look.trail]);
+    m.st = this.stats();
     m.gf = 1;
     m.g = [];
     for (let i = 0; i < s.W * s.H; i++) m.g.push(gridCode(s, i));
@@ -233,6 +248,10 @@ export class Encoder {
     if (s.summary !== this.lastSummary) {
       m.sum = s.summary;
       this.lastSummary = s.summary;
+    }
+    if (s.phase !== this.statsPhase) {
+      m.st = this.stats();
+      this.statsPhase = s.phase;
     }
     const ev = g.drainEvents();
     if (ev.length) m.ev = ev;
@@ -340,6 +359,8 @@ export function applyTick(s: GameState, m: TickMsg): GameEvent[] {
         territory: 0,
         connected: true,
         outRound: 0,
+        look: validLook(null),
+        stats: emptyStats(),
       };
     }
     [p.score] = a;
@@ -360,12 +381,19 @@ export function applyTick(s: GameState, m: TickMsg): GameEvent[] {
     p.fills = a[15] ?? 0;
   });
   if (m.pn) {
-    m.pn.forEach(([name, diff, faction], id) => {
+    m.pn.forEach(([name, diff, faction, title, hat, trail], id) => {
       if (s.players[id]) {
         s.players[id].name = name;
         s.players[id].difficulty = diff;
         s.players[id].faction = faction ?? 0;
+        s.players[id].look = validLook({ title, hat, trail });
       }
+    });
+  }
+  if (m.st) {
+    m.st.forEach((a, id) => {
+      const p = s.players[id];
+      if (p) STAT_KEYS.forEach((k, j) => (p.stats[k] = a[j] ?? 0));
     });
   }
   if (m.g) {

@@ -1,7 +1,7 @@
 import { PLAYER_COLORS, SHIP_FLAGSHIP, SHIP_RADIUS, arcHeight } from '../shared/constants';
 import { pieceCells } from '../shared/pieces';
 import { regionBounds } from '../shared/rules';
-import { GameState } from '../shared/types';
+import { Ball, GameState, Trail } from '../shared/types';
 import { Effects } from './effects';
 import { Controller, ViewTransform } from './input';
 import { Session } from './session';
@@ -546,6 +546,8 @@ export class Renderer implements ViewTransform {
       ctx.ellipse(this.sx(gx), this.sy(gy), sc * 0.2 * (0.5 + shade * 0.5), sc * 0.13 * (0.5 + shade * 0.5), 0, 0, Math.PI * 2);
       ctx.fill();
       const r = sc * 0.17 * (1 + Math.min(h, 10) * 0.07);
+      const trail = b.owner >= 0 ? (s.players[b.owner]?.look.trail ?? 'none') : 'none';
+      if (trail !== 'none') this.drawTrail(b, t, trail, now, r);
       const bx = this.sx(gx);
       const by = this.sy(gy - h);
       ctx.fillStyle = b.owner < 0 ? '#2a1010' : '#111';
@@ -554,6 +556,64 @@ export class Renderer implements ViewTransform {
       ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.fillRect(bx - r * 0.45, by - r * 0.45, Math.max(1, r * 0.4), Math.max(1, r * 0.4));
+    }
+  }
+
+  /** An earned cannonball trail: a few puffs, embers or sparks along the recent arc. */
+  private drawTrail(b: Ball, t: number, trail: Trail, now: number, r: number) {
+    const ctx = this.ctx;
+    const sc = this.cam.s;
+    const dx = b.tx - b.fx;
+    const dy = b.ty - b.fy;
+    const arc = arcHeight(Math.hypot(dx, dy));
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const N = 8;
+    for (let k = N; k >= 1; k--) {
+      const tt = t - (k * 0.045) / b.dur;
+      if (tt <= 0) continue;
+      const fade = 1 - k / (N + 1);
+      let wob = 0;
+      if (trail === 'arcane') wob = Math.sin(now * 9 + k * 0.9 + b.id) * 0.18;
+      else if (trail === 'gold') wob = Math.sin(k * 1.7 + b.id) * 0.14;
+      const x = this.sx(b.fx + dx * tt + nx * wob);
+      const y = this.sy(b.fy + dy * tt + ny * wob - Math.sin(Math.PI * tt) * arc);
+      switch (trail) {
+        case 'smoke':
+          ctx.fillStyle = `rgba(70,70,74,${0.5 * fade})`;
+          ctx.beginPath();
+          ctx.arc(x, y, r * (0.7 + k * 0.18), 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        case 'fire': {
+          const cols = ['#fff2a8', '#ffd34d', '#ff9a2a', '#ff6a2a', '#d23a1a'];
+          const sz = Math.max(1.5, r * 1.6 * fade);
+          const j = Math.sin(now * 40 + k * 2.3) * sc * 0.05;
+          ctx.globalAlpha = fade;
+          ctx.fillStyle = cols[Math.min(cols.length - 1, k >> 1)];
+          ctx.fillRect(x - sz / 2 + j, y - sz / 2 - j, sz, sz);
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'gold': {
+          const tw = 0.5 + 0.5 * Math.sin(now * 22 + k * 2 + b.id);
+          const sz = Math.max(1.5, sc * 0.12 * (0.6 + tw * 0.6));
+          ctx.globalAlpha = fade * (0.4 + tw * 0.6);
+          ctx.fillStyle = k % 2 ? '#ffd23a' : '#fff6b0';
+          ctx.fillRect(x - sz / 2, y - sz / 2, sz, sz);
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'arcane':
+          ctx.globalAlpha = 0.85 * fade;
+          ctx.fillStyle = k % 2 ? '#b565ff' : '#62e0ff';
+          ctx.beginPath();
+          ctx.arc(x, y, Math.max(1.2, r * (1.1 - k * 0.08)), 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+      }
     }
   }
 

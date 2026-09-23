@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { sealingCut } from '../src/shared/ai';
+import { ACHIEVEMENTS, TITLES, applyRecord, earnedLook, loadCareer, newCareer, parseRecord, recordFor, validAccountName, validLook } from '../src/shared/career';
 import { FACTIONS, FILLS_PER_BUILD, SHIP_FLAGSHIP, TICK, flightTime, levelDef } from '../src/shared/constants';
 import { Game, GameConfig } from '../src/shared/engine';
 import { generateMap } from '../src/shared/mapgen';
 import { PIECE_DEFS, ROTATIONS, UNIQUE_ROTATIONS, pieceCells } from '../src/shared/pieces';
 import { Encoder, applyTick, encodeStatic, stateFromStatic } from '../src/shared/protocol';
 import { canPlacePiece, computeEnclosed, obstacleMap } from '../src/shared/rules';
-import { EXECUTIONS, LAND } from '../src/shared/types';
+import { EXECUTIONS, HATS, LAND, STAT_KEYS, TRAILS, emptyStats } from '../src/shared/types';
 
 const cpu = (n: number, difficulty: 'easy' | 'normal' | 'hard' = 'normal') =>
   Array.from({ length: n }, (_, i) => ({ name: `CPU${i}`, ai: true, difficulty }));
@@ -242,6 +243,133 @@ describe('network protocol', () => {
       }
     }
     expect(checks).toBeGreaterThan(50);
+    // Stats arrive with every phase change, so the final report matches the server's.
+    expect(mirror.players.map((p) => p.stats)).toEqual(g.s.players.map((p) => p.stats));
+  });
+
+  it('carries each commander\'s cosmetics', () => {
+    const look = { title: TITLES[0], hat: 'horns' as const, trail: 'fire' as const };
+    const g = new Game({ mode: 'versus', seed: 5, players: [{ name: 'me', ai: false, difficulty: 'normal', look }, ...cpu(1)] });
+    const mirror = stateFromStatic(encodeStatic(g.s));
+    applyTick(mirror, new Encoder(g).full());
+    expect(mirror.players[0].look).toEqual(look);
+    expect(mirror.players[1].look).toEqual(validLook(null));
+  });
+});
+
+describe('game stats', () => {
+  it('tallies shots, hits, walls, cannons and land in a battle', () => {
+    const g = new Game({ mode: 'versus', seed: 21, rounds: 4, players: cpu(3) });
+    runUntil(g, () => g.s.phase === 'gameover', 1500);
+    const all = g.s.players.map((p) => p.stats);
+    for (const st of all) {
+      expect(st.shots).toBeGreaterThan(0);
+      expect(st.hits).toBeLessThanOrEqual(st.shots);
+      expect(st.cannons).toBeGreaterThanOrEqual(3);
+      expect(st.pieces).toBeGreaterThan(0);
+      expect(st.maxLand).toBeGreaterThan(0);
+      expect(st.maxCastles).toBeGreaterThanOrEqual(1);
+      expect(st.walls).toBeLessThanOrEqual(st.hits);
+    }
+    // Every wall knocked down by a cannon is lost by somebody (there are no grunts in battles).
+    const sum = (k: 'walls' | 'wallsLost' | 'cannonsKilled' | 'cannonsLost') => all.reduce((a, st) => a + st[k], 0);
+    expect(sum('walls')).toBe(sum('wallsLost'));
+    expect(sum('cannonsKilled')).toBe(sum('cannonsLost'));
+    expect(sum('walls')).toBeGreaterThan(0);
+  });
+
+  it('counts ships sunk against the fleet', () => {
+    const g = new Game({ mode: 'solo', seed: 3, players: cpu(1) });
+    runUntil(g, () => (g.s.solo?.level ?? 0) >= 2 || g.s.phase === 'gameover', 800);
+    const st = g.s.players[0].stats;
+    expect(st.ships).toBeGreaterThanOrEqual(g.s.solo!.sunk);
+    expect(st.hits).toBeGreaterThanOrEqual(st.ships);
+    expect(st.walls).toBe(0);
+  });
+});
+
+describe('careers and honours', () => {
+  const record = (over: Partial<ReturnType<typeof parseRecord> & object> = {}) =>
+    parseRecord({ id: 'game-000001', kind: 'battle', difficulty: 'normal', won: true, players: 2, humans: 0, rank: 1, score: 5000, level: 0, rounds: 8, fate: 'tomatoes', stats: emptyStats(), ...over })!;
+
+  it('adds games to the career and awards honours once', () => {
+    const c = newCareer();
+    expect(applyRecord(c, record())).toContain('victor');
+    expect(applyRecord(c, record({ id: 'game-000002' }))).not.toContain('victor');
+    expect(c.games).toBe(2);
+    expect(c.wins).toBe(2);
+    expect(c.modes.battle).toEqual({ played: 2, won: 2, best: 5000, level: 0 });
+    expect(c.dealt.tomatoes).toBe(2);
+  });
+
+  it('keeps peak stats as bests and sums the rest', () => {
+    const c = newCareer();
+    applyRecord(c, record({ stats: { ...emptyStats(), shots: 10, maxLand: 90 } }));
+    applyRecord(c, record({ stats: { ...emptyStats(), shots: 5, maxLand: 60 } }));
+    expect(c.totals.shots).toBe(15);
+    expect(c.totals.maxLand).toBe(90);
+  });
+
+  it('needs every punishment for Cruel and Unusual, and ten suffered for the fool\'s cap', () => {
+    const c = newCareer();
+    const got = EXECUTIONS.flatMap((fate, i) => applyRecord(c, record({ id: `game-${i}00000`, fate })));
+    expect(got.filter((id) => id === 'merciless')).toHaveLength(1);
+    expect(c.honours.merciless).toBeGreaterThan(0);
+    for (let i = 0; i < 10; i++) applyRecord(c, record({ id: `lost-${i}00000`, won: false, fate: 'dragon' }));
+    expect(c.suffered).toBe(10);
+    expect(c.honours.glutton).toBeGreaterThan(0);
+  });
+
+  it('builds a record from a finished game', () => {
+    const g = new Game({ mode: 'versus', seed: 1002, rounds: 3, players: cpu(2, 'hard') });
+    runUntil(g, () => !!g.s.execution, 1500);
+    const r = recordFor(g.s, g.s.winner, 'battle', 'abcdef-1');
+    expect(r.won).toBe(true);
+    expect(r.rank).toBe(1);
+    expect(r.difficulty).toBe('hard');
+    expect(r.fate).toBe(g.s.execution);
+    expect(parseRecord(JSON.parse(JSON.stringify(r)))).toEqual(r);
+  });
+
+  it('rejects malformed records and clamps silly numbers', () => {
+    expect(parseRecord(null)).toBeNull();
+    expect(parseRecord({ ...record(), kind: 'cheat' })).toBeNull();
+    expect(parseRecord({ ...record(), id: 'x' })).toBeNull();
+    const r = parseRecord({ ...record(), players: 99, rank: -3, stats: { shots: 5, hits: 50, walls: -4 } })!;
+    expect(r.players).toBe(4);
+    expect(r.rank).toBe(1);
+    expect(r.stats.hits).toBe(5);
+    expect(r.stats.walls).toBe(0);
+  });
+
+  it('only lets you wear what you have earned', () => {
+    const look = { title: 'the Tidy', hat: 'hood', trail: 'fire' };
+    expect(earnedLook(look, {})).toEqual({ title: '', hat: 'crown', trail: 'none' });
+    expect(earnedLook(look, { spotless: 1, merciless: 1 })).toEqual({ title: 'the Tidy', hat: 'hood', trail: 'none' });
+    expect(validLook({ title: 'the Emperor', hat: 'bucket', trail: 'glitter' })).toEqual({ title: '', hat: 'crown', trail: 'none' });
+  });
+
+  it('gives every cosmetic a way to be earned', () => {
+    for (const h of HATS.filter((x) => x !== 'crown')) expect(ACHIEVEMENTS.some((a) => a.reward.hat === h)).toBe(true);
+    for (const t of TRAILS.filter((x) => x !== 'none')) expect(ACHIEVEMENTS.some((a) => a.reward.trail === t)).toBe(true);
+    expect(new Set(ACHIEVEMENTS.map((a) => a.id)).size).toBe(ACHIEVEMENTS.length);
+  });
+
+  it('fills in a stored career that is missing newer fields', () => {
+    const c = loadCareer({ games: 3, totals: { shots: 7 }, honours: { victor: 5, bogus: 1 } });
+    expect(c.games).toBe(3);
+    expect(c.totals.shots).toBe(7);
+    for (const k of STAT_KEYS) expect(typeof c.totals[k]).toBe('number');
+    expect(c.honours).toEqual({ victor: 5 });
+    expect(c.modes.online.played).toBe(0);
+  });
+
+  it('checks commander names', () => {
+    expect(validAccountName('  Sir   Lancelot ')).toBe('Sir Lancelot');
+    expect(validAccountName('Åsa')).toBe('Åsa');
+    expect(validAccountName('ab')).toBeNull();
+    expect(validAccountName('<script>')).toBeNull();
+    expect(validAccountName('a'.repeat(17))).toBeNull();
   });
 });
 
