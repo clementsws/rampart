@@ -1,7 +1,10 @@
 export type Mode = 'solo' | 'versus';
 export type Difficulty = 'easy' | 'normal' | 'hard';
 export type Phase = 'select' | 'autobuild' | 'cannons' | 'combat' | 'build' | 'summary' | 'gameover';
-export type Execution = 'plank' | 'behead';
+export type Execution = 'plank' | 'behead' | 'tomatoes' | 'trebuchet' | 'dragon' | 'dunk' | 'jester';
+
+/** Every fate a winner can choose for the losers (in menu order). */
+export const EXECUTIONS: readonly Execution[] = ['tomatoes', 'plank', 'behead', 'trebuchet', 'dragon', 'dunk', 'jester'];
 
 export const WATER = 0;
 export const LAND = 1;
@@ -11,6 +14,8 @@ export interface Player {
   name: string;
   ai: boolean;
   difficulty: Difficulty;
+  /** Index into FACTIONS: decides how the player's walls and castles look. */
+  faction: number;
   alive: boolean;
   score: number;
   /** Castle id of the home castle, -1 before selection. */
@@ -21,6 +26,8 @@ export interface Player {
   /** Number of pieces placed so far; used to de-duplicate network actions. */
   pieceSeq: number;
   cannonsToPlace: number;
+  /** Craters the player can still fill in during this build phase. */
+  fills: number;
   cursorX: number;
   cursorY: number;
   rot: number;
@@ -93,11 +100,22 @@ export interface Grunt {
 }
 
 export interface SoloState {
+  difficulty: Difficulty;
+  /** Endless siege: levels keep coming until the player falls. */
+  endless: boolean;
   level: number;
+  /** Ships in the whole level, and how many of them have not set sail yet. */
   total: number;
   remaining: number;
   sunk: number;
   levelDone: boolean;
+  /** Current wave (0 before the first one) out of `waves`. */
+  wave: number;
+  waves: number;
+  /** Ships of the current wave still to launch. */
+  waveLeft: number;
+  /** Earliest time the next wave may set sail. */
+  waveT: number;
   spawnT: number;
   victory: boolean;
 }
@@ -149,6 +167,7 @@ export type Action =
   | { type: 'select'; castle: number }
   | { type: 'place'; x: number; y: number; rot: number; seq: number }
   | { type: 'cannon'; x: number; y: number }
+  | { type: 'fill'; x: number; y: number }
   | { type: 'fire'; x: number; y: number }
   | { type: 'cursor'; x: number; y: number; rot: number }
   | { type: 'execute'; method: Execution };
@@ -159,6 +178,8 @@ export type GameEvent =
   | { e: 'phase'; phase: Phase; round: number; level: number }
   | { e: 'place'; p: number; cells: number[] }
   | { e: 'cannon'; p: number; x: number; y: number }
+  | { e: 'fill'; p: number; x: number; y: number }
+  | { e: 'wave'; level: number; wave: number; waves: number }
   | { e: 'fire'; p: number; x: number; y: number }
   | { e: 'boom'; x: number; y: number; kind: BoomKind }
   | { e: 'sink'; x: number; y: number }

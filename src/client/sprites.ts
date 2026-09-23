@@ -1,13 +1,8 @@
 import { GameState, LAND } from '../shared/types';
+import { RGB, canvas, css, desaturate, factionCastle, factionWall, hash, hex, mix } from './factions';
 
 /** Source resolution of all pixel art: one tile = TS x TS pixels. */
 export const TS = 16;
-
-type RGB = [number, number, number];
-
-const hex = (h: string): RGB => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
-const css = (c: RGB, a = 1) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
-const mix = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 
 export interface PlayerPalette {
   main: string;
@@ -18,30 +13,27 @@ export interface PlayerPalette {
   terrA: RGB;
   terrB: RGB;
   flag: string;
+  flagRGB: RGB;
 }
+
+const palette = (main: string, light: string, mid: string, dark: string, edge: string, terrA: string, terrB: string, flag: string): PlayerPalette => ({
+  main,
+  wallLight: hex(light),
+  wallMid: hex(mid),
+  wallDark: hex(dark),
+  wallEdge: hex(edge),
+  terrA: hex(terrA),
+  terrB: hex(terrB),
+  flag,
+  flagRGB: hex(flag),
+});
 
 export const PALETTES: PlayerPalette[] = [
-  { main: '#3f6df2', wallLight: hex('#d9e0ff'), wallMid: hex('#9eaef0'), wallDark: hex('#5a68c4'), wallEdge: hex('#262d6b'), terrA: hex('#1a2766'), terrB: hex('#0d1540'), flag: '#4f7dff' },
-  { main: '#e0404f', wallLight: hex('#ffe0e3'), wallMid: hex('#f0a3ab'), wallDark: hex('#c45a66'), wallEdge: hex('#6b1f28'), terrA: hex('#6a1620'), terrB: hex('#380a10'), flag: '#ff4d5e' },
-  { main: '#f2b705', wallLight: hex('#fff6d0'), wallMid: hex('#f0d47a'), wallDark: hex('#c49a2e'), wallEdge: hex('#664a0a'), terrA: hex('#6a5010'), terrB: hex('#3a2a06'), flag: '#ffc823' },
-  { main: '#a24de8', wallLight: hex('#f1e0ff'), wallMid: hex('#c9a3f0'), wallDark: hex('#8a5ac4'), wallEdge: hex('#3d1f6b'), terrA: hex('#44186a'), terrB: hex('#240a3a'), flag: '#b565ff' },
+  palette('#3f6df2', '#d9e0ff', '#9eaef0', '#5a68c4', '#262d6b', '#1a2766', '#0d1540', '#4f7dff'),
+  palette('#e0404f', '#ffe0e3', '#f0a3ab', '#c45a66', '#6b1f28', '#6a1620', '#380a10', '#ff4d5e'),
+  palette('#f2b705', '#fff6d0', '#f0d47a', '#c49a2e', '#664a0a', '#6a5010', '#3a2a06', '#ffc823'),
+  palette('#a24de8', '#f1e0ff', '#c9a3f0', '#8a5ac4', '#3d1f6b', '#44186a', '#240a3a', '#b565ff'),
 ];
-
-function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d')!;
-  ctx.imageSmoothingEnabled = false;
-  return [c, ctx];
-}
-
-/** Deterministic hash noise in [0,1). */
-function hash(x: number, y: number, seed: number): number {
-  let h = (x * 374761393 + y * 668265263 + seed * 2147483647) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
 
 function valueNoise(x: number, y: number, seed: number): number {
   const xi = Math.floor(x);
@@ -126,57 +118,6 @@ export function renderTerrain(s: GameState): HTMLCanvasElement {
   return c;
 }
 
-export interface SpriteSet {
-  /** walls[player][mask] where mask bits = neighbours N(1) E(2) S(4) W(8). */
-  walls: HTMLCanvasElement[][];
-  deadWalls: HTMLCanvasElement[];
-  territory: HTMLCanvasElement[];
-  rubble: HTMLCanvasElement;
-  crater: HTMLCanvasElement[];
-  bonus: HTMLCanvasElement;
-  castles: HTMLCanvasElement[];
-}
-
-function wallSprite(p: { wallLight: RGB; wallMid: RGB; wallDark: RGB; wallEdge: RGB }, mask: number): HTMLCanvasElement {
-  const [c, ctx] = canvas(TS, TS);
-  const n = mask & 1;
-  const e = mask & 2;
-  const so = mask & 4;
-  const w = mask & 8;
-  const px = (x: number, y: number, col: RGB) => {
-    ctx.fillStyle = css(col);
-    ctx.fillRect(x, y, 1, 1);
-  };
-  // Body with a subtle brick pattern.
-  for (let y = 0; y < TS; y++) {
-    for (let x = 0; x < TS; x++) {
-      const row = Math.floor(y / 4);
-      const mortar = y % 4 === 3 || (x + (row % 2) * 4) % 8 === 7;
-      px(x, y, mortar ? mix(p.wallMid, p.wallDark, 0.55) : mix(p.wallMid, p.wallLight, hash(x, y, 7) * 0.25));
-    }
-  }
-  // Raised top face highlight.
-  ctx.fillStyle = css(p.wallLight);
-  if (!n) ctx.fillRect(0, 0, TS, 3);
-  if (!w) ctx.fillRect(0, 0, 2, TS);
-  // Shadowed sides.
-  ctx.fillStyle = css(p.wallDark);
-  if (!so) ctx.fillRect(0, TS - 4, TS, 4);
-  if (!e) ctx.fillRect(TS - 3, 0, 3, TS);
-  // Crisp outline where the wall ends.
-  ctx.fillStyle = css(p.wallEdge);
-  if (!n) ctx.fillRect(0, 0, TS, 1);
-  if (!so) ctx.fillRect(0, TS - 1, TS, 1);
-  if (!w) ctx.fillRect(0, 0, 1, TS);
-  if (!e) ctx.fillRect(TS - 1, 0, 1, TS);
-  // Crenellations along exposed top edges.
-  if (!n) {
-    ctx.fillStyle = css(p.wallEdge);
-    for (let x = 2; x < TS - 1; x += 5) ctx.fillRect(x, 1, 2, 2);
-  }
-  return c;
-}
-
 function territorySprite(a: RGB, b: RGB): HTMLCanvasElement {
   const [c, ctx] = canvas(TS, TS);
   for (let y = 0; y < TS; y += 4) {
@@ -256,66 +197,64 @@ function bonusSprite(): HTMLCanvasElement {
   return c;
 }
 
-/** 2x2-tile castle keep with towers; flag in the owner's colour (neutral = white). */
-function castleSprite(flag: string, owned: boolean): HTMLCanvasElement {
-  const S = TS * 2;
-  const [c, ctx] = canvas(S, S);
-  const stone = owned ? ['#c9c9cf', '#a2a2ab', '#74747e', '#4a4a52'] : ['#b3b3b3', '#8e8e8e', '#666666', '#404040'];
-  const rect = (x: number, y: number, w: number, h: number, col: string) => {
-    ctx.fillStyle = col;
-    ctx.fillRect(x, y, w, h);
-  };
-  // Shadow
-  rect(4, 29, 26, 3, 'rgba(0,0,0,0.35)');
-  // Towers
-  for (const tx of [3, 21]) {
-    rect(tx, 9, 8, 21, stone[1]);
-    rect(tx, 9, 2, 21, stone[0]);
-    rect(tx + 6, 9, 2, 21, stone[2]);
-    for (let k = 0; k < 4; k++) rect(tx + k * 2, 6, 1, 3, k % 2 ? stone[3] : stone[0]);
-    rect(tx, 8, 8, 1, stone[3]);
-    rect(tx + 3, 14, 2, 3, stone[3]);
+/** All map sprites. Faction walls and castles are drawn on first use and cached. */
+export class SpriteSet {
+  readonly territory = PALETTES.map((p) => territorySprite(p.terrA, p.terrB));
+  readonly rubble = rubbleSprite();
+  readonly crater = [craterSprite(1), craterSprite(2)];
+  readonly bonus = bonusSprite();
+  private wallCache = new Map<string, HTMLCanvasElement[]>();
+  private castleCache = new Map<string, HTMLCanvasElement>();
+
+  /** walls(faction, color)[mask], mask bits = neighbours N(1) E(2) S(4) W(8). Fallen players' walls are grey. */
+  walls(faction: number, color: number, dead = false): HTMLCanvasElement[] {
+    const key = `${faction}:${color}:${dead ? 1 : 0}`;
+    let set = this.wallCache.get(key);
+    if (!set) {
+      const pal = PALETTES[((color % 4) + 4) % 4];
+      set = Array.from({ length: 16 }, (_, m) => {
+        const c = factionWall(faction, pal, m);
+        return dead ? desaturate(c, 0.9, 0.15) : c;
+      });
+      this.wallCache.set(key, set);
+    }
+    return set;
   }
-  // Keep
-  rect(9, 12, 14, 18, stone[1]);
-  rect(9, 12, 14, 2, stone[0]);
-  for (let k = 0; k < 7; k++) rect(9 + k * 2, 10, 1, 2, stone[0]);
-  rect(21, 12, 2, 18, stone[2]);
-  // Masonry lines
-  for (let y = 16; y < 30; y += 4) rect(9, y, 14, 1, stone[2]);
-  // Gate
-  rect(13, 22, 6, 8, stone[3]);
-  rect(14, 21, 4, 1, stone[3]);
-  rect(14, 23, 4, 7, '#1f1a16');
-  // Windows
-  rect(11, 16, 2, 3, '#1f1a16');
-  rect(19, 16, 2, 3, '#1f1a16');
-  // Flag
-  rect(15, 0, 1, 11, '#3b2a1a');
-  rect(16, 1, 7, 5, flag);
-  rect(16, 5, 7, 1, 'rgba(0,0,0,0.3)');
-  rect(22, 2, 1, 3, 'rgba(255,255,255,0.35)');
-  // Outline
-  ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(3.5, 9.5, 7, 20);
-  ctx.strokeRect(21.5, 9.5, 7, 20);
-  return c;
+
+  /** A faction's stronghold flying the owner's colours (owner -1: unclaimed, white flag). */
+  castle(faction: number, owner: number): HTMLCanvasElement {
+    const key = `${faction}:${owner}`;
+    let c = this.castleCache.get(key);
+    if (!c) {
+      c = owner >= 0 ? factionCastle(faction, PALETTES[owner % 4].flag) : desaturate(factionCastle(faction, '#f4f4f4'), 0.45);
+      this.castleCache.set(key, c);
+    }
+    return c;
+  }
 }
 
-export function buildSprites(): SpriteSet {
-  const walls = PALETTES.map((p) => Array.from({ length: 16 }, (_, m) => wallSprite(p, m)));
-  const grey = { wallLight: hex('#c8c8c8'), wallMid: hex('#9a9a9a'), wallDark: hex('#6a6a6a'), wallEdge: hex('#333333') };
-  const deadWalls = Array.from({ length: 16 }, (_, m) => wallSprite(grey, m));
-  return {
-    walls,
-    deadWalls,
-    territory: PALETTES.map((p) => territorySprite(p.terrA, p.terrB)),
-    rubble: rubbleSprite(),
-    crater: [craterSprite(1), craterSprite(2)],
-    bonus: bonusSprite(),
-    castles: [castleSprite('#f4f4f4', false), ...PALETTES.map((p) => castleSprite(p.flag, true))],
-  };
+/** A small walled fort showing off a faction's architecture (menus). */
+export function drawFactionPreview(c: HTMLCanvasElement, sp: SpriteSet, faction: number, color: number) {
+  const cols = 6;
+  const rows = 5;
+  if (c.width !== cols * TS) {
+    c.width = cols * TS;
+    c.height = rows * TS;
+  }
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, c.width, c.height);
+  const walls = sp.walls(faction, color);
+  const isWall = (x: number, y: number) => x >= 0 && y >= 0 && x < cols && y < rows && (x === 0 || y === 0 || x === cols - 1 || y === rows - 1);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      if (isWall(x, y)) {
+        const mask = (isWall(x, y - 1) ? 1 : 0) | (isWall(x + 1, y) ? 2 : 0) | (isWall(x, y + 1) ? 4 : 0) | (isWall(x - 1, y) ? 8 : 0);
+        ctx.drawImage(walls[mask], x * TS, y * TS);
+      } else ctx.drawImage(sp.territory[color % 4], x * TS, y * TS);
+    }
+  }
+  ctx.drawImage(sp.castle(faction, color), 2 * TS, 1 * TS);
 }
 
 /** Walls, territory, craters, rubble and bonus squares, redrawn when the grid changes. */
@@ -344,8 +283,8 @@ export function renderStructures(s: GameState, sp: SpriteSet, target: HTMLCanvas
       if (w >= 0) {
         const same = (xx: number, yy: number) => xx >= 0 && yy >= 0 && xx < W && yy < s.H && s.wall[yy * W + xx] === w;
         const mask = (same(x, y - 1) ? 1 : 0) | (same(x + 1, y) ? 2 : 0) | (same(x, y + 1) ? 4 : 0) | (same(x - 1, y) ? 8 : 0);
-        const alive = s.players[w]?.alive !== false;
-        ctx.drawImage(alive ? sp.walls[w % 4][mask] : sp.deadWalls[mask], px, py);
+        const owner = s.players[w];
+        ctx.drawImage(sp.walls(owner?.faction ?? 0, w, owner?.alive === false)[mask], px, py);
       }
     }
   }

@@ -1,13 +1,14 @@
-import { AI_NAMES, PLAYER_COLORS, SOLO_LEVELS } from '../shared/constants';
+import { AI_NAMES, FACTIONS, PLAYER_COLORS, SOLO_LEVELS, levelDef, validFaction } from '../shared/constants';
 import { GameConfig } from '../shared/engine';
 import { LobbyInfo, ServerMsg } from '../shared/protocol';
-import { Difficulty, GameEvent, GameState } from '../shared/types';
+import { Difficulty, EXECUTIONS, GameEvent, GameState } from '../shared/types';
 import { buzz, sfx } from './audio';
-import { ExecutionScene, figureFor } from './execution';
+import { Beat, ExecutionScene, FATES, PIRATE_ADMIRAL, figureFor } from './execution';
 import { Controller, TouchMode } from './input';
 import { Net } from './net';
 import { Renderer, drawPiecePreview } from './render';
 import { LocalSession, OnlineSession, Session } from './session';
+import { drawFactionPreview } from './sprites';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -30,11 +31,34 @@ const store = {
   },
 };
 
+const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
+
 const settings = {
   name: store.get('name'),
   sound: store.get('sound', 'on'),
   touch: store.get('touch', 'drag') as TouchMode,
+  faction: validFaction(store.get('faction', '0')),
+  campDiff: (DIFFS.find((d) => d === store.get('campDiff')) ?? 'normal') as Difficulty,
+  campMode: store.get('campMode', 'campaign') === 'endless' ? 'endless' : 'campaign',
 };
+
+interface Best {
+  score: number;
+  level: number;
+  wave: number;
+  won: boolean;
+}
+
+const bestKey = (mode: string, diff: string) => `best.${mode}.${diff}`;
+
+function loadBest(mode: string, diff: string): Best | null {
+  try {
+    const b = JSON.parse(store.get(bestKey(mode, diff), 'null'));
+    return b && typeof b.score === 'number' ? b : null;
+  } catch {
+    return null;
+  }
+}
 
 function playerName(): string {
   const v = ($<HTMLInputElement>('in-name').value || '').trim().slice(0, 16);
@@ -84,6 +108,7 @@ function setSession(s: Session | null) {
   ctrl.setSession(s && !demo ? s : null);
   lastPhaseKey = '';
   firingShown = false;
+  fillHints = 0;
   hideGameOver();
   buildChips();
 }
@@ -182,7 +207,58 @@ function startLocal(cfg: GameConfig) {
 }
 
 function startCampaign() {
-  startLocal({ mode: 'solo', players: [{ name: playerName(), ai: false, difficulty: 'normal' }] });
+  startLocal({
+    mode: 'solo',
+    campaign: { difficulty: settings.campDiff, endless: settings.campMode === 'endless' },
+    players: [{ name: playerName(), ai: false, difficulty: 'normal', faction: settings.faction }],
+  });
+}
+
+const DIFF_NOTES: Record<Difficulty, string> = {
+  easy: 'Smaller waves and clumsy gunners. Good for learning the ropes.',
+  normal: 'Ships attack in waves. Galleons fire broadsides from level 5, and the pirate flagship leads the final assault.',
+  hard: 'Big waves, sharp-eyed gunners, broadsides from level 3 and a flagship every third level. Good luck.',
+};
+
+function updateCampaignScreen() {
+  $('camp-diff-note').textContent = DIFF_NOTES[settings.campDiff];
+  $('camp-mode-note').textContent =
+    settings.campMode === 'endless' ? 'The waves never stop. How long can your walls hold?' : 'Six levels. Sink every ship to win.';
+  const b = loadBest(settings.campMode, settings.campDiff);
+  $('camp-best').textContent = b
+    ? `Your best: ${b.score.toLocaleString()} points · ${b.won ? '👑 victory' : `reached level ${b.level}, wave ${Math.max(1, b.wave)}`}`
+    : 'No record yet on this setting.';
+}
+
+/** Faction choice on the home screen: a little fort in each faction's style. */
+function buildFactionPicker() {
+  const wrap = $('faction-pick');
+  wrap.innerHTML = '';
+  FACTIONS.forEach((f, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.title = `${f.name}: ${f.castle}`;
+    b.classList.toggle('on', i === settings.faction);
+    const c = document.createElement('canvas');
+    drawFactionPreview(c, renderer.sprites, i, 0);
+    const label = document.createElement('span');
+    label.textContent = f.name;
+    b.append(c, label);
+    b.onclick = () => {
+      settings.faction = i;
+      store.set('faction', String(i));
+      wrap.querySelectorAll('button').forEach((x, k) => x.classList.toggle('on', k === i));
+      updateFactionName();
+      if (lobby && mySlot >= 0) net?.send({ t: 'faction', slot: mySlot, faction: i });
+    };
+    wrap.append(b);
+  });
+  updateFactionName();
+}
+
+function updateFactionName() {
+  const f = FACTIONS[settings.faction];
+  $('faction-name').textContent = `${f.crest} ${f.name} · ${f.castle}`;
 }
 
 const segValue = (name: string) => document.querySelector<HTMLElement>(`.seg[data-seg="${name}"] .on`)?.dataset.v ?? '';
@@ -191,7 +267,7 @@ function startBattle() {
   const n = Number(segValue('opponents')) || 1;
   const difficulty = (segValue('difficulty') || 'normal') as Difficulty;
   const rounds = Number(segValue('rounds')) || 8;
-  const players = [{ name: playerName(), ai: false, difficulty }];
+  const players: GameConfig['players'] = [{ name: playerName(), ai: false, difficulty, faction: settings.faction }];
   for (let i = 1; i <= n; i++) players.push({ name: AI_NAMES[i], ai: true, difficulty });
   startLocal({ mode: 'versus', rounds, players });
 }
@@ -218,7 +294,7 @@ function joinRoom(code: string) {
   history.replaceState(null, '', `?room=${code}`);
   net = new Net(
     code,
-    () => ({ t: 'hello', name: playerName(), token: store.get('token.' + code) }),
+    () => ({ t: 'hello', name: playerName(), token: store.get('token.' + code), faction: settings.faction }),
     (m) => onServer(code, m),
     (ok) => {
       $('net-status').hidden = ok;
@@ -300,6 +376,26 @@ function renderLobby() {
       name.appendChild(t);
     }
     row.append(dot, name);
+    if (s.kind !== 'open') {
+      // Faction badge: tap your own (or, as host, a computer's) to switch faction.
+      const f = FACTIONS[s.faction] ?? FACTIONS[0];
+      const fb = document.createElement('button');
+      fb.className = 'fac';
+      fb.textContent = `${f.crest} ${f.name}`;
+      fb.title = f.castle;
+      const mine = i === mySlot || (isHost && s.kind === 'ai');
+      fb.disabled = !mine || lobby!.inGame;
+      fb.onclick = () => {
+        const next = (s.faction + 1) % FACTIONS.length;
+        if (i === mySlot) {
+          settings.faction = next;
+          store.set('faction', String(next));
+          buildFactionPicker();
+        }
+        net?.send({ t: 'faction', slot: i, faction: next });
+      };
+      row.append(fb);
+    }
     if (isHost && !lobby!.inGame) {
       if (s.kind === 'open') {
         const b = document.createElement('button');
@@ -461,21 +557,28 @@ function updateHud(sess: Session, dt: number) {
   timer.textContent = showTimer ? String(sec) : '';
   timer.classList.toggle('low', showTimer && sec <= 5);
   $('round').textContent = s.solo
-    ? `Level ${s.solo.level}/${SOLO_LEVELS} · ⚓ ${s.solo.sunk}/${s.solo.total}`
+    ? `Level ${s.solo.level}${s.solo.endless ? '' : `/${SOLO_LEVELS}`} · Wave ${Math.max(1, s.solo.wave)}/${s.solo.waves} · ⚓ ${s.solo.sunk}/${s.solo.total}`
     : `Round ${Math.min(s.round, s.maxRounds)}/${s.maxRounds}`;
 
   const building = s.phase === 'build' && !!me?.alive;
   $('btn-rotate').hidden = !building;
   $('next-wrap').hidden = !building;
-  if (building) drawPiecePreview($<HTMLCanvasElement>('next-piece'), me!.next, 0, sess.you);
+  if (building) drawPiecePreview($<HTMLCanvasElement>('next-piece'), renderer.sprites, me!.next, 0, sess.you, me!.faction);
   const cc = $('cannon-count');
   const toPlace = me && s.phase === 'cannons' ? me.cannonsToPlace - ctrl.pendingCannons.length : 0;
   cc.textContent = toPlace > 0 ? `💣 × ${toPlace}` : '';
+  const fills = building ? me!.fills - ctrl.pendingFills.length : 0;
+  let craters = 0;
+  if (building && fills > 0) for (let i = 0; i < s.W * s.H; i++) if (s.crater[i] && s.region[i] === sess.you && s.wall[i] < 0) craters++;
+  $('fill-count').textContent = building ? `⛏️ × ${fills}` : '';
+  $('fill-count').classList.toggle('dim', fills <= 0 || craters === 0);
   $('btn-zoom').hidden = !renderer.canZoom(s) || s.phase === 'gameover';
 
   // Contextual hint.
   let hint = '';
   if (me && !me.alive && s.phase !== 'gameover') hint = 'You have been defeated — watching the battle';
+  else if (building && fills > 0 && craters > 0 && fillHints < 4)
+    hint = `${isTouch() ? 'Tap' : 'Click'} a glowing crater to fill it in · ⛏️ ${fills} left this round`;
   else if (me && s.round <= 2) {
     if (s.phase === 'select') hint = 'Tap a glowing castle to make it your home';
     else if (s.phase === 'cannons' && toPlace > 0)
@@ -486,7 +589,8 @@ function updateHud(sess: Session, dt: number) {
           ? 'Drag to move · tap piece to drop · ⟳ rotates'
           : 'Touch to aim the piece, lift to drop · ⟳ rotates'
         : 'Click to place · right-click / R rotates';
-    else if (s.phase === 'combat' && now >= s.fireStart && now < s.fireEnd) hint = s.solo ? 'Tap ahead of the ships — cannonballs are slow!' : 'Tap enemy walls to blast holes in them';
+    else if (s.phase === 'combat' && now >= s.fireStart && now < s.fireEnd)
+      hint = s.solo ? 'Tap ahead of the ships — cannonballs are slow!' : 'Tap enemy walls to blast holes — make every shot count';
   }
   $('hint').textContent = hint;
 
@@ -519,11 +623,13 @@ function phaseBanner(s: GameState, cannons: number) {
       sfx.fanfare('phase');
       break;
     case 'combat':
-      banner(s.solo ? `LEVEL ${s.solo.level}` : 'PREPARE FOR BATTLE', s.solo ? 'Enemy fleet approaching' : 'Ready your cannons…');
+      if (s.solo) banner(`LEVEL ${s.solo.level}`, s.ships.length ? 'The fleet regroups…' : 'Enemy fleet approaching');
+      else banner('PREPARE FOR BATTLE', 'Ready your cannons…');
       break;
     case 'build':
       banner('BUILD & REPAIR', 'Close your walls!');
       sfx.fanfare('phase');
+      fillHints++;
       break;
     default:
       break;
@@ -536,6 +642,59 @@ function escapeHtml(t: string) {
 
 let goShown = false;
 let execShown: string | null = null;
+let fillHints = 0;
+
+const ELIMINATION_QUIPS = [
+  'Their walls were more of a suggestion',
+  'Pack your things, the moat is full',
+  'Should have built a bigger wall',
+  'The peasants are already rioting',
+  'Their castle is now a fixer-upper',
+  'Game over, man. Game over.',
+];
+
+/** Saves a campaign / endless record; returns true when it beats the previous best. */
+function recordBest(s: GameState): boolean {
+  if (!s.solo || localConfig?.mode !== 'solo') return false;
+  const mode = s.solo.endless ? 'endless' : 'campaign';
+  const cur: Best = { score: s.players[0]?.score ?? 0, level: s.solo.level, wave: s.solo.wave, won: s.solo.victory };
+  const old = loadBest(mode, s.solo.difficulty);
+  if (old && old.score >= cur.score) return false;
+  store.set(bestKey(mode, s.solo.difficulty), JSON.stringify(cur));
+  return true;
+}
+
+function playBeat(beat: Beat) {
+  switch (beat) {
+    case 'splash':
+      sfx.splash();
+      break;
+    case 'splat':
+      sfx.splat();
+      break;
+    case 'whoosh':
+      sfx.whoosh();
+      break;
+    case 'ding':
+      sfx.ding();
+      break;
+    case 'roar':
+      sfx.roar();
+      break;
+    case 'burp':
+      sfx.burp();
+      break;
+    case 'jingle':
+      sfx.jingle();
+      break;
+    case 'honk':
+      sfx.honk();
+      break;
+    default:
+      sfx.boom();
+  }
+  buzz(beat === 'chop' || beat === 'splat' ? 30 : 15);
+}
 
 function showGameOver(sess: Session) {
   const s = sess.state;
@@ -544,10 +703,32 @@ function showGameOver(sess: Session) {
     goShown = true;
     panel.hidden = false;
     let title: string;
-    if (s.solo) title = s.solo.victory ? 'THE FLEET IS DEFEATED!' : 'YOUR KINGDOM HAS FALLEN';
+    if (s.solo) title = s.solo.victory ? 'THE FLEET IS DEFEATED!' : s.solo.endless ? 'THE SIEGE IS OVER' : 'YOUR KINGDOM HAS FALLEN';
     else if (s.winner === sess.you) title = 'VICTORY!';
     else title = `${s.players[s.winner]?.name ?? 'Nobody'} WINS`;
     $('go-title').textContent = title;
+    let sub = '';
+    if (s.solo) {
+      const diff = s.solo.difficulty[0].toUpperCase() + s.solo.difficulty.slice(1);
+      sub = s.solo.victory
+        ? `${diff} campaign complete!`
+        : `${diff}${s.solo.endless ? ' endless siege' : ''}: fell on level ${s.solo.level}, wave ${Math.max(1, s.solo.wave)}.`;
+      if (recordBest(s)) sub += ' 🏆 New personal best!';
+    }
+    $('go-sub').textContent = sub;
+    const rivals = s.players.filter((p) => p.id !== sess.you).length;
+    $('go-choose-text').textContent = s.solo
+      ? 'The Pirate Admiral is at your mercy. Choose their fate:'
+      : `Your rival${rivals > 1 ? 's are' : ' is'} at your mercy. Choose their fate:`;
+    const fates = $('go-fates');
+    fates.innerHTML = '';
+    for (const m of EXECUTIONS) {
+      const b = document.createElement('button');
+      b.className = 'btn';
+      b.textContent = `${FATES[m].icon} ${FATES[m].label}`;
+      b.onclick = () => session?.act({ type: 'execute', method: m });
+      fates.append(b);
+    }
     const ranked = [...s.players].sort((a, b) => b.score - a.score);
     $('go-standings').innerHTML =
       `<table><tr><th>Commander</th><th>Castles</th><th>Score</th></tr>` +
@@ -564,21 +745,28 @@ function showGameOver(sess: Session) {
     if (s.solo) sfx.fanfare(s.solo.victory ? 'win' : 'bad');
     else sfx.fanfare(s.winner === sess.you ? 'win' : 'bad');
   }
-  const canChoose = !s.solo && s.winner === sess.you && !s.execution;
+  const canChoose = s.winner === sess.you && sess.you >= 0 && !s.execution;
   $('go-choose').hidden = !canChoose;
+  const wait = $('go-wait');
+  wait.hidden = canChoose || !!s.execution;
+  if (!wait.hidden) {
+    const w = s.players[s.winner];
+    wait.textContent = s.solo ? 'The pirates are deciding your fate…' : `${w?.name ?? 'The victor'} is deciding the losers' fate…`;
+  }
   if (s.execution && execShown !== s.execution) {
     execShown = s.execution;
     const c = $<HTMLCanvasElement>('exec-canvas');
     c.hidden = false;
     $('gameover').classList.add('with-exec');
     execScene?.stop();
-    const w = s.players[s.winner];
-    const victims = s.players.filter((p) => p.id !== s.winner).map((p) => figureFor(p.name, p.id));
-    execScene = new ExecutionScene(c, s.execution, victims, figureFor(w?.name ?? '', s.winner), (beat) => {
-      if (beat === 'splash') sfx.splash();
-      else sfx.boom();
-      buzz(30);
-    });
+    let victims = s.players.filter((p) => p.id !== s.winner).map((p) => figureFor(p.name, p.id));
+    let executioner = figureFor(s.players[s.winner]?.name ?? '', s.winner);
+    if (s.solo) {
+      const me = figureFor(s.players[0]?.name ?? 'You', 0);
+      victims = s.solo.victory ? [PIRATE_ADMIRAL] : [me];
+      executioner = s.solo.victory ? me : PIRATE_ADMIRAL;
+    }
+    execScene = new ExecutionScene(c, s.execution, victims, executioner, playBeat);
   }
 }
 
@@ -617,7 +805,7 @@ function onEvent(e: GameEvent, sess: Session) {
       break;
     case 'eliminated':
       if (quiet) break;
-      banner(`${s.players[e.p]?.name ?? 'A player'} HAS FALLEN`);
+      banner(`${s.players[e.p]?.name ?? 'A player'} HAS FALLEN`, ELIMINATION_QUIPS[(e.p + s.round) % ELIMINATION_QUIPS.length]);
       sfx.fanfare(e.p === sess.you ? 'bad' : 'good');
       break;
     case 'levelComplete':
@@ -625,6 +813,17 @@ function onEvent(e: GameEvent, sess: Session) {
       banner('FLEET DESTROYED!', `Level ${e.level} bonus +${e.bonus}`);
       sfx.fanfare('good');
       break;
+    case 'wave': {
+      if (quiet) break;
+      sfx.horn();
+      const solo = s.solo;
+      if (e.wave > 1 && solo && sess.now() - s.phaseStart > 1.5) {
+        const last = e.wave === e.waves;
+        const boss = last && levelDef(e.level, solo.difficulty).boss;
+        banner(`WAVE ${e.wave}/${e.waves}`, boss ? 'The pirate flagship approaches!' : last ? 'Final wave!' : 'More sails on the horizon!');
+      }
+      break;
+    }
     default:
       break;
   }
@@ -666,12 +865,16 @@ function wire() {
     const go = el.dataset.go!;
     if (go === 'back') back();
     else if (go === 'campaign') startCampaign();
-    else show(go);
+    else {
+      if (go === 'screen-campaign') updateCampaignScreen();
+      show(go);
+    }
   });
 
   document.querySelectorAll<HTMLElement>('.seg').forEach((seg) => {
     const name = seg.dataset.seg!;
-    const current = name === 'sound' ? settings.sound : name === 'touch' ? settings.touch : null;
+    const current =
+      name === 'sound' ? settings.sound : name === 'touch' ? settings.touch : name === 'camp-diff' ? settings.campDiff : name === 'camp-mode' ? settings.campMode : null;
     if (current) seg.querySelectorAll<HTMLElement>('button').forEach((b) => b.classList.toggle('on', b.dataset.v === current));
     seg.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('button');
@@ -688,6 +891,14 @@ function wire() {
         ctrl.touchMode = v as TouchMode;
       } else if (name === 'lobby-rounds') {
         net?.send({ t: 'rounds', rounds: Number(v) });
+      } else if (name === 'camp-diff') {
+        settings.campDiff = v as Difficulty;
+        store.set('campDiff', v);
+        updateCampaignScreen();
+      } else if (name === 'camp-mode') {
+        settings.campMode = v === 'endless' ? 'endless' : 'campaign';
+        store.set('campMode', v);
+        updateCampaignScreen();
       }
     });
   });
@@ -763,8 +974,6 @@ function wire() {
       startLocal(localConfig);
     }
   };
-  $('btn-plank').onclick = () => session?.act({ type: 'execute', method: 'plank' });
-  $('btn-behead').onclick = () => session?.act({ type: 'execute', method: 'behead' });
 
   window.addEventListener('resize', () => renderer.resize());
   window.visualViewport?.addEventListener('resize', () => renderer.resize());
@@ -794,6 +1003,7 @@ function wire() {
 };
 
 wire();
+buildFactionPicker();
 startDemo();
 const roomParam = new URLSearchParams(location.search).get('room');
 if (roomParam) {

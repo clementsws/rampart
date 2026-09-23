@@ -1,4 +1,4 @@
-import { BALL_MIN_TIME, BALL_SPEED } from './constants';
+import { flightTime } from './constants';
 import type { Game } from './engine';
 import { DIRS4 } from './mapgen';
 import { UNIQUE_ROTATIONS, pieceCells } from './pieces';
@@ -57,6 +57,7 @@ export class AIController {
   private stuckUntil = 0;
   private lastPlan: { x0: number; y0: number; x1: number; y1: number } | null = null;
   private fillCost: Uint8Array | null = null;
+  private fillT = 0;
 
   constructor(
     private readonly g: Game,
@@ -74,6 +75,7 @@ export class AIController {
     this.focus = -1;
     this.stuckUntil = 0;
     this.actT = this.g.s.time + 0.4 + this.rng.next() * 0.8;
+    this.fillT = this.actT + this.skill.think;
     const p = this.g.s.players[this.pid];
     const home = this.g.s.castles[p.home];
     if ((phase === 'build' || phase === 'cannons') && home) {
@@ -115,6 +117,7 @@ export class AIController {
     const p = s.players[this.pid];
     if (p.piece < 0 || s.time < this.stuckUntil) return;
     if (!this.target || this.target.seq !== p.pieceSeq) {
+      if (this.fillTick()) return;
       const choice = this.choosePlacement();
       if (!choice) {
         this.stuckUntil = s.time + 1;
@@ -144,6 +147,56 @@ export class AIController {
       this.target = null;
       if (!ok) this.stuckUntil = s.time + 0.3;
     }
+  }
+
+  /** Shovels a crater that is in the way of the planned walls (or spoils the land inside). */
+  private fillTick(): boolean {
+    const s = this.g.s;
+    const p = s.players[this.pid];
+    if (p.fills <= 0 || s.time < this.fillT) return false;
+    // Easier computers forget about their shovels now and then.
+    if (this.rng.next() < this.skill.sloppy) {
+      this.fillT = s.time + 3;
+      return false;
+    }
+    const i = this.chooseFill();
+    if (i < 0) {
+      this.fillT = s.time + 2;
+      return false;
+    }
+    const x = i % s.W;
+    const y = (i - x) / s.W;
+    this.g.act(this.pid, { type: 'fill', x, y });
+    p.cursorX = x;
+    p.cursorY = y;
+    this.fillT = s.time + this.skill.think + 0.3;
+    this.stuckUntil = s.time + this.skill.think * 0.6;
+    return true;
+  }
+
+  private chooseFill(): number {
+    const g = this.g;
+    const s = g.s;
+    if (!this.lastPlan) this.computePlan();
+    const r = this.lastPlan;
+    if (!r) return -1;
+    let best = -1;
+    let bv = 0;
+    for (let y = Math.max(0, r.y0 - 2); y <= Math.min(s.H - 1, r.y1 + 2); y++) {
+      for (let x = Math.max(0, r.x0 - 2); x <= Math.min(s.W - 1, r.x1 + 2); x++) {
+        const i = y * s.W + x;
+        if (!g.canFill(this.pid, i)) continue;
+        const inside = x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
+        const ring = !inside && x >= r.x0 - 1 && x <= r.x1 + 1 && y >= r.y0 - 1 && y <= r.y1 + 1;
+        // Craters on the wall line matter most, then ones that spoil the enclosed land.
+        const v = (ring ? 10 : inside ? 4 : 2) + this.rng.next();
+        if (v > bv) {
+          bv = v;
+          best = i;
+        }
+      }
+    }
+    return best;
   }
 
   /**
@@ -524,7 +577,7 @@ export class AIController {
       let px = sh.x;
       let py = sh.y;
       for (let k = 0; k < 3; k++) {
-        const t = BALL_MIN_TIME + Math.hypot(px - (c.x + 1), py - (c.y + 1)) / BALL_SPEED;
+        const t = flightTime(s.mode, Math.hypot(px - (c.x + 1), py - (c.y + 1)));
         px = sh.x + sh.vx * t;
         py = sh.y + sh.vy * t;
       }

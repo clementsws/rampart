@@ -1,5 +1,7 @@
 import type { Game } from './engine';
-import { Ball, Difficulty, Execution, GameEvent, GameState, Mode, Phase, SummaryRow } from './types';
+import { Ball, Difficulty, Execution, GameEvent, GameState, Mode, Phase, Player, SummaryRow } from './types';
+
+const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
 
 // ------------------------------------------------------------ lobby types
 
@@ -9,6 +11,7 @@ export interface SlotInfo {
   kind: SlotKind;
   name: string;
   difficulty: Difficulty;
+  faction: number;
   connected: boolean;
 }
 
@@ -23,8 +26,9 @@ export interface LobbyInfo {
 // ----------------------------------------------------------- client -> server
 
 export type ClientMsg =
-  | { t: 'hello'; name: string; token: string }
+  | { t: 'hello'; name: string; token: string; faction?: number }
   | { t: 'slot'; slot: number; kind: 'ai' | 'open'; difficulty?: Difficulty }
+  | { t: 'faction'; slot: number; faction: number }
   | { t: 'rounds'; rounds: number }
   | { t: 'start' }
   | { t: 'lobby' }
@@ -56,9 +60,9 @@ export interface TickMsg {
   mr: number;
   win: number;
   ex: Execution | null;
-  solo: [number, number, number, number, number, number] | null;
+  solo: number[] | null;
   pl: number[][];
-  pn?: [string, Difficulty][];
+  pn?: [string, Difficulty, number][];
   /** Grid: idx/code pairs, or every code when gf is set. */
   g?: number[];
   gf?: 1;
@@ -141,7 +145,18 @@ export class Encoder {
       win: s.winner,
       ex: s.execution,
       solo: s.solo
-        ? [s.solo.level, s.solo.total, s.solo.remaining, s.solo.sunk, s.solo.levelDone ? 1 : 0, s.solo.victory ? 1 : 0]
+        ? [
+            s.solo.level,
+            s.solo.total,
+            s.solo.remaining,
+            s.solo.sunk,
+            s.solo.levelDone ? 1 : 0,
+            s.solo.victory ? 1 : 0,
+            s.solo.wave,
+            s.solo.waves,
+            DIFFS.indexOf(s.solo.difficulty),
+            s.solo.endless ? 1 : 0,
+          ]
         : null,
       pl: s.players.map((p) => [
         p.score,
@@ -159,6 +174,7 @@ export class Encoder {
         p.connected ? 1 : 0,
         p.ai ? 1 : 0,
         p.outRound,
+        p.fills,
       ]),
     };
   }
@@ -177,7 +193,7 @@ export class Encoder {
     const g = this.game;
     const s = g.s;
     const m = this.base();
-    m.pn = s.players.map((p) => [p.name, p.difficulty]);
+    m.pn = s.players.map((p) => [p.name, p.difficulty, p.faction]);
     m.gf = 1;
     m.g = [];
     for (let i = 0; i < s.W * s.H; i++) m.g.push(gridCode(s, i));
@@ -290,18 +306,25 @@ export function applyTick(s: GameState, m: TickMsg): GameEvent[] {
         remaining: m.solo[2],
         sunk: m.solo[3],
         levelDone: !!m.solo[4],
-        spawnT: 0,
         victory: !!m.solo[5],
+        wave: m.solo[6] ?? 0,
+        waves: m.solo[7] ?? 0,
+        difficulty: DIFFS[m.solo[8]] ?? 'normal',
+        endless: !!m.solo[9],
+        waveLeft: 0,
+        waveT: 0,
+        spawnT: 0,
       }
     : null;
   m.pl.forEach((a, id) => {
-    let p = s.players[id];
+    let p: Player = s.players[id];
     if (!p) {
       p = s.players[id] = {
         id,
         name: `Player ${id + 1}`,
         ai: false,
         difficulty: 'normal',
+        faction: 0,
         alive: true,
         score: 0,
         home: -1,
@@ -309,6 +332,7 @@ export function applyTick(s: GameState, m: TickMsg): GameEvent[] {
         next: -1,
         pieceSeq: 0,
         cannonsToPlace: 0,
+        fills: 0,
         cursorX: -1,
         cursorY: -1,
         rot: 0,
@@ -333,12 +357,14 @@ export function applyTick(s: GameState, m: TickMsg): GameEvent[] {
     p.connected = !!a[12];
     p.ai = !!a[13];
     p.outRound = a[14];
+    p.fills = a[15] ?? 0;
   });
   if (m.pn) {
-    m.pn.forEach(([name, diff], id) => {
+    m.pn.forEach(([name, diff, faction], id) => {
       if (s.players[id]) {
         s.players[id].name = name;
         s.players[id].difficulty = diff;
+        s.players[id].faction = faction ?? 0;
       }
     });
   }

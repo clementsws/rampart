@@ -46,6 +46,8 @@ export class Controller {
   session: Session | null = null;
   pending: { seq: number; cells: number[]; t: number } | null = null;
   pendingCannons: { x: number; y: number; t: number }[] = [];
+  /** Crater fills sent to the server but not confirmed yet (online). */
+  pendingFills: { i: number; t: number }[] = [];
   private pointers = new Map<number, Ptr>();
   private phase = '';
   private bounds = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -80,6 +82,7 @@ export class Controller {
     this.session = s;
     this.pending = null;
     this.pendingCannons = [];
+    this.pendingFills = [];
     this.phase = '';
     this.pointers.clear();
     if (s && s.you >= 0) {
@@ -211,6 +214,48 @@ export class Controller {
         if (p.cannonsToPlace - this.pendingCannons.length > (s.online ? 0 : -1)) this.snapCannon(x + 1, y + 1);
       }
     }
+  }
+
+  /** Tile index of a crater at world point (x, y) the player may shovel flat right now, or -1. */
+  fillableAt(x: number, y: number): number {
+    const s = this.session;
+    const p = this.me;
+    if (!s || !p || !p.alive || s.state.phase !== 'build' || p.fills - this.pendingFills.length <= 0) return -1;
+    const st = s.state;
+    const tx = Math.floor(x);
+    const ty = Math.floor(y);
+    if (tx < 0 || ty < 0 || tx >= st.W || ty >= st.H) return -1;
+    const i = ty * st.W + tx;
+    if (!st.crater[i] || st.region[i] !== s.you || st.wall[i] >= 0) return -1;
+    if (st.grunts.some((g) => g.x === tx && g.y === ty) || this.pendingFills.some((f) => f.i === i)) return -1;
+    return i;
+  }
+
+  /** Shovels the crater at tile i back to flat ground. */
+  fill(i: number): boolean {
+    const s = this.session;
+    if (!s || i < 0) return false;
+    const x = i % s.state.W;
+    const y = Math.floor(i / s.state.W);
+    if (!s.act({ type: 'fill', x, y })) return false;
+    sfx.shovel();
+    buzz(15);
+    if (s.online) this.pendingFills.push({ i, t: performance.now() });
+    return true;
+  }
+
+  /** Keyboard: fill a crater under the piece. */
+  private fillUnderPiece() {
+    const g = this.ghost();
+    if (!g || g.kind !== 'piece') return;
+    for (const [x, y] of g.cells) {
+      const i = this.fillableAt(x + 0.5, y + 0.5);
+      if (i >= 0) {
+        this.fill(i);
+        return;
+      }
+    }
+    sfx.bad();
   }
 
   fire(x: number, y: number) {
@@ -347,8 +392,17 @@ export class Controller {
       return;
     }
     if (phase !== 'build' && phase !== 'cannons') return;
+    // Clicking or tapping straight on a crater shovels it flat.
+    const crater = phase === 'build' && (tap || e.pointerType === 'mouse') ? this.fillableAt(w.x, w.y) : -1;
     if (e.pointerType === 'mouse') {
-      if (e.button === 0) this.place();
+      if (e.button === 0) {
+        if (crater >= 0) this.fill(crater);
+        else this.place();
+      }
+      return;
+    }
+    if (crater >= 0) {
+      this.fill(crater);
       return;
     }
     if (this.touchMode === 'direct') {
@@ -408,6 +462,8 @@ export class Controller {
       } else this.place();
     } else if (k === 'r' || k === 'x' || k === 'z' || k === 'Shift') {
       this.rotate(k === 'z' ? 3 : 1);
+    } else if (k === 'f' && phase === 'build') {
+      this.fillUnderPiece();
     }
   }
 
@@ -435,6 +491,9 @@ export class Controller {
     }
     const now = performance.now();
     if (this.pending && (p.pieceSeq >= this.pending.seq || now - this.pending.t > 2000 || st.phase !== 'build')) this.pending = null;
+    if (this.pendingFills.length) {
+      this.pendingFills = this.pendingFills.filter((f) => st.phase === 'build' && now - f.t < 2000 && st.crater[f.i] > 0);
+    }
     if (this.pendingCannons.length) {
       this.pendingCannons = this.pendingCannons.filter(
         (pc) => st.phase === 'cannons' && now - pc.t < 2000 && !st.cannons.some((c) => c.owner === s.you && c.x === pc.x && c.y === pc.y),

@@ -278,6 +278,86 @@ h2 {
   margin: 0 0 10px;
 }
 
+.slot button.fac {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot button.fac:disabled {
+  opacity: 1;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+/* Faction picker: a little fort per faction. */
+.fname {
+  color: var(--ink);
+  margin-left: 4px;
+}
+
+.factions {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.factions button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 4px 2px 3px;
+  border-radius: 10px;
+  border: 2px solid var(--line);
+  background: #0b1120;
+  color: var(--muted);
+  font: 600 10px system-ui, sans-serif;
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.factions button canvas {
+  width: 100%;
+  max-width: 60px;
+  aspect-ratio: 6 / 5;
+  image-rendering: pixelated;
+}
+
+.factions button span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.factions button.on {
+  border-color: var(--gold2);
+  background: var(--btn-hi);
+  color: var(--gold2);
+}
+
+.best {
+  color: var(--gold2);
+}
+
+.fates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.fates .btn {
+  min-height: 40px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
 /* -------------------------------------------------------------------- hud */
 
 #hud {
@@ -551,6 +631,29 @@ h2 {
   display: none;
 }
 
+#fill-count {
+  position: absolute;
+  right: calc(90px + var(--safe-r));
+  bottom: calc(82px + var(--safe-b));
+  width: 56px;
+  padding: 5px 0;
+  border-radius: 10px;
+  background: rgba(6, 10, 20, 0.7);
+  text-align: center;
+  font-family: var(--pixel);
+  font-size: 9px;
+  color: var(--gold2);
+}
+
+#fill-count:empty {
+  display: none;
+}
+
+#fill-count.dim {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
 .panel {
   position: absolute;
   left: 50%;
@@ -610,6 +713,15 @@ h2 {
   margin: 8px 0;
 }
 
+#go-sub:empty {
+  display: none;
+}
+
+#go-wait {
+  color: var(--gold2);
+  font-style: italic;
+}
+
 #exec-canvas {
   display: block;
   width: 100%;
@@ -661,6 +773,14 @@ h2 {
 @media (max-width: 640px) {
   .chip .nm {
     display: none;
+  }
+}
+
+/* Narrow screens: keep hints clear of the piece preview and buttons. */
+@media (max-width: 560px) {
+  #hint {
+    bottom: calc(118px + var(--safe-b));
+    max-width: 86vw;
   }
 }
 
@@ -725,6 +845,18 @@ h2 {
   }
   #gameover h2 {
     margin-bottom: 6px;
+  }
+  .fates {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+  .fates .btn {
+    min-height: 34px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+  #gameover p {
+    margin: 4px 0;
   }
   .panel {
     max-height: calc(100% - 50px);

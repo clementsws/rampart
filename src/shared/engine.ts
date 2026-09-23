@@ -1,8 +1,6 @@
 import { AIController } from './ai';
 import {
   AUTOBUILD_TIME,
-  BALL_MIN_TIME,
-  BALL_SPEED,
   BUILD_TIME,
   CANNON_HP,
   CANNON_TIME,
@@ -11,10 +9,13 @@ import {
   COMBAT_TIME,
   CRATER_ROUNDS,
   DEFAULT_ROUNDS,
+  FACTIONS,
+  FILLS_PER_BUILD,
   FIRST_CANNON_TIME,
   GRUNT_ATTACK_TIME,
   GRUNT_MOVE_TIME,
-  LEVELS,
+  LevelDef,
+  MAX_AT_SEA,
   MAX_GRUNTS,
   SCORE_BONUS_SQUARE,
   SCORE_CANNON_HIT,
@@ -28,6 +29,7 @@ import {
   SCORE_TILE,
   SCORE_WALL,
   SELECT_TIME,
+  SHIP_FLAGSHIP,
   SHIP_HP,
   SHIP_RADIUS,
   SHIP_RANGE,
@@ -35,6 +37,10 @@ import {
   SOLO_COMBAT_TIME,
   SOLO_LEVELS,
   SUMMARY_TIME,
+  WAVE_LULL,
+  flightTime,
+  levelDef,
+  validFaction,
 } from './constants';
 import { DIRS4, DIRS8, generateMap } from './mapgen';
 import { PIECE_WEIGHTS, pieceCells } from './pieces';
@@ -57,6 +63,8 @@ import {
   Ball,
   BoomKind,
   Difficulty,
+  EXECUTIONS,
+  Execution,
   GameEvent,
   GameState,
   LAND,
@@ -71,6 +79,8 @@ export interface PlayerConfig {
   name: string;
   ai: boolean;
   difficulty: Difficulty;
+  /** Faction index; computer players without one get a faction nobody else uses. */
+  faction?: number;
 }
 
 export interface GameConfig {
@@ -78,6 +88,8 @@ export interface GameConfig {
   players: PlayerConfig[];
   seed?: number;
   rounds?: number;
+  /** Solo only: fleet strength, and whether the levels go on forever. */
+  campaign?: { difficulty: Difficulty; endless?: boolean };
 }
 
 const FAR = 0x7fff;
@@ -107,14 +119,18 @@ export class Game {
     this.rng = new Rng(seed ^ 0x5bd1e995);
     this.pieceRng = [];
     const players: Player[] = [];
+    const configs: PlayerConfig[] = [];
+    for (let i = 0; i < n; i++) configs.push(cfg.players[i] ?? { name: `CPU ${i + 1}`, ai: true, difficulty: 'normal' as Difficulty });
+    const factions = this.assignFactions(configs);
     for (let i = 0; i < n; i++) {
-      const pc = cfg.players[i] ?? { name: `CPU ${i + 1}`, ai: true, difficulty: 'normal' as Difficulty };
+      const pc = configs[i];
       this.pieceRng.push(new Rng(seed + 7919 * (i + 1)));
       players.push({
         id: i,
         name: pc.name,
         ai: pc.ai,
         difficulty: pc.difficulty,
+        faction: factions[i],
         alive: true,
         score: 0,
         home: -1,
@@ -122,6 +138,7 @@ export class Game {
         next: -1,
         pieceSeq: 0,
         cannonsToPlace: 0,
+        fills: 0,
         cursorX: -1,
         cursorY: -1,
         rot: 0,
@@ -131,6 +148,7 @@ export class Game {
         outRound: 0,
       });
     }
+    const campaign = cfg.campaign ?? { difficulty: 'normal' as Difficulty };
     this.s = {
       mode: cfg.mode,
       W: map.W,
@@ -157,7 +175,24 @@ export class Game {
       time: 0,
       round: 1,
       maxRounds: cfg.mode === 'solo' ? 0 : cfg.rounds ?? DEFAULT_ROUNDS,
-      solo: cfg.mode === 'solo' ? { level: 1, total: 0, remaining: 0, sunk: 0, levelDone: false, spawnT: 0, victory: false } : null,
+      solo:
+        cfg.mode === 'solo'
+          ? {
+              difficulty: ['easy', 'normal', 'hard'].includes(campaign.difficulty) ? campaign.difficulty : 'normal',
+              endless: !!campaign.endless,
+              level: 1,
+              total: 0,
+              remaining: 0,
+              sunk: 0,
+              levelDone: false,
+              wave: 0,
+              waves: 0,
+              waveLeft: 0,
+              waveT: 0,
+              spawnT: 0,
+              victory: false,
+            }
+          : null,
       winner: -1,
       execution: null,
       summary: [],
@@ -177,6 +212,13 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- helpers
+
+  /** Keeps chosen factions; anyone without one gets an unused faction (so every army looks different). */
+  private assignFactions(configs: PlayerConfig[]): number[] {
+    const out = configs.map((c) => (c.faction === undefined || c.faction === null || c.faction < 0 ? -1 : validFaction(c.faction)));
+    const pool = this.rng.shuffle(FACTIONS.map((_, i) => i).filter((f) => !out.includes(f)));
+    return out.map((f) => (f >= 0 ? f : (pool.shift() ?? this.rng.int(FACTIONS.length))));
+  }
 
   emit(ev: GameEvent) {
     this.events.push(ev);
@@ -294,11 +336,11 @@ export class Game {
         }
         break;
       case 'gameover':
-        if (s.mode === 'versus' && s.winner >= 0 && !s.execution) {
+        if (!s.execution && (s.winner >= 0 || s.mode === 'solo')) {
+          // A human winner picks the losers' fate; computer winners (and the pirates) choose quickly.
           const w = s.players[s.winner];
-          if ((w.ai && s.time > s.phaseStart + 3) || s.time >= s.phaseEnd) {
-            this.execute(this.rng.next() < 0.5 ? 'plank' : 'behead');
-          }
+          const wait = !w ? 2.5 : w.ai ? 3 : Infinity;
+          if (s.time > s.phaseStart + wait || s.time >= s.phaseEnd) this.execute(this.rng.pick(EXECUTIONS));
         }
         break;
     }
@@ -332,18 +374,20 @@ export class Game {
         return this.placePiece(pid, a.x, a.y, a.rot, a.seq);
       case 'cannon':
         return this.placeCannon(pid, a.x, a.y);
+      case 'fill':
+        return this.fillCrater(pid, a.x, a.y);
       case 'fire':
         return this.fire(pid, a.x, a.y);
       case 'execute':
         if (s.phase !== 'gameover' || s.winner !== pid || s.execution) return false;
-        if (a.method !== 'plank' && a.method !== 'behead') return false;
+        if (!EXECUTIONS.includes(a.method)) return false;
         this.execute(a.method);
         return true;
     }
     return false;
   }
 
-  private execute(method: 'plank' | 'behead') {
+  private execute(method: Execution) {
     this.s.execution = method;
     this.emit({ e: 'execute', method });
   }
@@ -392,6 +436,28 @@ export class Game {
     return true;
   }
 
+  /** Can `pid` shovel the crater at tile i back to flat ground right now? */
+  canFill(pid: number, i: number): boolean {
+    const s = this.s;
+    const p = s.players[pid];
+    if (s.phase !== 'build' || !p?.alive || p.fills <= 0 || i < 0 || i >= s.W * s.H) return false;
+    if (s.region[i] !== pid || !s.crater[i] || s.wall[i] >= 0) return false;
+    return !s.grunts.some((g) => g.y * s.W + g.x === i);
+  }
+
+  fillCrater(pid: number, x: number, y: number): boolean {
+    const s = this.s;
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= s.W || y >= s.H) return false;
+    const i = y * s.W + x;
+    if (!this.canFill(pid, i)) return false;
+    s.crater[i] = 0;
+    s.rubble[i] = 0;
+    this.markDirty(i);
+    s.players[pid].fills--;
+    this.emit({ e: 'fill', p: pid, x: x + 0.5, y: y + 0.5 });
+    return true;
+  }
+
   fire(pid: number, tx: number, ty: number): boolean {
     const s = this.s;
     const p = s.players[pid];
@@ -420,7 +486,7 @@ export class Game {
   private launch(owner: number, cannon: number, fx: number, fy: number, tx: number, ty: number) {
     const s = this.s;
     const dist = Math.hypot(tx - fx, ty - fy);
-    const ball: Ball = { id: this.id(), owner, cannon, fx, fy, tx, ty, t0: s.time, dur: BALL_MIN_TIME + dist / BALL_SPEED };
+    const ball: Ball = { id: this.id(), owner, cannon, fx, fy, tx, ty, t0: s.time, dur: flightTime(s.mode, dist) };
     s.balls.push(ball);
     this.newBalls.push(ball);
   }
@@ -594,13 +660,33 @@ export class Game {
     s.fireStart = s.time + COMBAT_READY;
     s.fireEnd = s.fireStart + fight;
     if (s.solo) {
-      if (s.solo.levelDone) this.setupLevel(s.solo.level + 1);
-      s.solo.spawnT = s.time;
+      const solo = s.solo;
+      if (solo.levelDone) this.setupLevel(solo.level + 1);
+      solo.spawnT = s.time;
+      // Ships left over from last round get a head start on the next wave.
+      solo.waveT = s.time + (s.ships.length ? this.levelDef().waveGap * 0.5 : 0.3);
       this.buildSeaFields();
-      const def = LEVELS[s.solo.level - 1];
+      const def = this.levelDef();
       for (const sh of s.ships) sh.reload = def.fireInterval * this.rng.range(0.4, 1.0) + COMBAT_READY;
     }
     this.setPhase('combat', COMBAT_READY + fight);
+  }
+
+  /** Current campaign level's fleet. */
+  levelDef(): LevelDef {
+    const solo = this.s.solo;
+    return levelDef(solo?.level ?? 1, solo?.difficulty ?? 'normal');
+  }
+
+  private startWave() {
+    const s = this.s;
+    const solo = s.solo!;
+    const def = this.levelDef();
+    solo.wave++;
+    solo.waveLeft = def.waves[solo.wave - 1] ?? 0;
+    solo.waveT = s.time + def.waveGap;
+    solo.spawnT = s.time;
+    this.emit({ e: 'wave', level: solo.level, wave: solo.wave, waves: solo.waves });
   }
 
   private tickCombat(dt: number) {
@@ -610,11 +696,20 @@ export class Game {
       this.updateShips(dt, firing);
       if (firing) this.updateGrunts(dt);
       const solo = s.solo;
-      const def = LEVELS[solo.level - 1];
-      const afloat = s.ships.filter((sh) => sh.sinkT === 0).length;
-      if (!solo.levelDone && solo.remaining > 0 && afloat < def.maxAtSea && s.time >= solo.spawnT && s.time < s.fireEnd - 3) {
-        this.spawnShip();
-        solo.spawnT = s.time + this.rng.range(1.2, 3.2);
+      let afloat = s.ships.filter((sh) => sh.sinkT === 0).length;
+      const sailing = s.time < s.fireEnd - 4;
+      if (!solo.levelDone && sailing) {
+        if (solo.waveLeft === 0 && solo.wave < solo.waves) {
+          // Wave beaten: a short lull, then the next one. Stragglers don't hold it back for long.
+          if (afloat === 0) solo.waveT = Math.min(solo.waveT, s.time + WAVE_LULL);
+          if (s.time >= solo.waveT) this.startWave();
+        }
+        if (solo.waveLeft > 0 && afloat < MAX_AT_SEA && s.time >= solo.spawnT) {
+          this.spawnShip(solo.waveLeft === 1 && solo.wave === solo.waves && this.levelDef().boss);
+          solo.waveLeft--;
+          afloat++;
+          solo.spawnT = s.time + this.rng.range(0.5, 1.2);
+        }
       }
       if (!solo.levelDone && solo.remaining === 0 && afloat === 0 && s.time >= s.fireStart) {
         solo.levelDone = true;
@@ -636,7 +731,7 @@ export class Game {
     const s = this.s;
     s.ships = s.ships.filter((sh) => sh.sinkT === 0);
     this.updateTerritory();
-    if (s.solo && s.solo.levelDone && s.solo.level >= SOLO_LEVELS) {
+    if (s.solo && s.solo.levelDone && s.solo.level >= SOLO_LEVELS && !s.solo.endless) {
       s.solo.victory = true;
       this.gameOver(0);
       return;
@@ -648,6 +743,7 @@ export class Game {
     const s = this.s;
     for (const p of s.players) {
       if (!p.alive) continue;
+      p.fills = FILLS_PER_BUILD;
       if (p.next < 0) p.next = this.randomPiece(p.id);
       if (p.piece < 0) {
         p.piece = p.next;
@@ -664,7 +760,10 @@ export class Game {
 
   private endBuild() {
     const s = this.s;
-    for (const p of s.players) p.piece = -1;
+    for (const p of s.players) {
+      p.piece = -1;
+      p.fills = 0;
+    }
     this.updateTerritory();
 
     // Grunts caught inside a player's walls are crushed.
@@ -840,12 +939,15 @@ export class Game {
 
   private setupLevel(level: number) {
     const solo = this.s.solo!;
-    const def = LEVELS[Math.min(level, LEVELS.length) - 1];
     solo.level = level;
-    solo.total = def.total;
-    solo.remaining = def.total;
+    const def = this.levelDef();
+    solo.total = def.waves.reduce((a, b) => a + b, 0);
+    solo.remaining = solo.total;
     solo.sunk = 0;
     solo.levelDone = false;
+    solo.wave = 0;
+    solo.waves = def.waves.length;
+    solo.waveLeft = 0;
     this.emit({ e: 'level', level });
   }
 
@@ -962,17 +1064,21 @@ export class Game {
     return true;
   }
 
-  private spawnShip() {
+  private spawnShip(flagship = false) {
     const s = this.s;
     const solo = s.solo!;
-    const def = LEVELS[solo.level - 1];
+    const def = this.levelDef();
+    solo.remaining--;
     const edge: number[] = [];
     for (let y = 1; y < s.H - 1; y++) if (s.terrain[y * s.W + s.W - 1] !== LAND) edge.push(y);
     if (!edge.length) return;
-    const taken = new Set(s.ships.map((sh) => Math.floor(sh.y)));
+    const taken = new Set<number>();
+    for (const sh of s.ships) for (let d = -1; d <= 1; d++) taken.add(Math.floor(sh.y) + d);
     const free = edge.filter((y) => !taken.has(y));
     const y = this.rng.pick(free.length ? free : edge);
-    const kind = this.rng.weighted(def.kinds);
+    const kind = flagship ? SHIP_FLAGSHIP : this.rng.weighted(def.kinds);
+    const cargo = kind === SHIP_FLAGSHIP ? 3 : kind === 2 ? 2 : kind === 1 ? 1 : 0;
+    const chance = kind === 1 ? def.gruntChance / 3 : def.gruntChance;
     const ship: Ship = {
       id: this.id(),
       kind,
@@ -986,18 +1092,17 @@ export class Game {
       reload: def.fireInterval * this.rng.range(0.6, 1.2),
       wx: s.W - 0.5,
       wy: y + 0.5,
-      grunts: kind === 2 && this.rng.next() < def.gruntChance ? 2 : kind === 1 && this.rng.next() < def.gruntChance / 3 ? 1 : 0,
+      grunts: cargo && this.rng.next() < chance ? cargo : 0,
       dropT: 0,
       holdT: 0,
       patrol: false,
     };
     s.ships.push(ship);
-    solo.remaining--;
   }
 
   private updateShips(dt: number, firing: boolean) {
     const s = this.s;
-    const def = LEVELS[s.solo!.level - 1];
+    const def = this.levelDef();
     s.ships = s.ships.filter((sh) => sh.sinkT === 0 || s.time - sh.sinkT < 1.6);
     const occupied = new Set<number>();
     for (const sh of s.ships) {
@@ -1047,9 +1152,17 @@ export class Game {
         const target = this.shipTarget(sh);
         if (target) {
           const err = def.aim;
-          this.launch(-1, -1, sh.x, sh.y, target.x + this.rng.gauss() * err, target.y + this.rng.gauss() * err);
+          // Big ships fire a broadside: a spread of balls walking along the target.
+          const balls = sh.kind === SHIP_FLAGSHIP ? 3 : sh.kind === 2 ? def.broadside : 1;
+          const ang = this.rng.next() * Math.PI;
+          for (let k = 0; k < balls; k++) {
+            const off = k - (balls - 1) / 2;
+            const tx = target.x + Math.cos(ang) * off * 1.3 + this.rng.gauss() * err;
+            const ty = target.y + Math.sin(ang) * off * 1.3 + this.rng.gauss() * err;
+            this.launch(-1, -1, sh.x, sh.y, tx, ty);
+          }
           this.emit({ e: 'fire', p: -1, x: sh.x, y: sh.y });
-          sh.reload = def.fireInterval * this.rng.range(0.7, 1.3);
+          sh.reload = def.fireInterval * this.rng.range(0.7, 1.3) * (balls > 1 ? 1.25 : 1);
         } else {
           sh.reload = 0.6;
         }

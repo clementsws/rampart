@@ -2,7 +2,7 @@
 
 A mobile-first browser remake of the arcade classic **Rampart**: wall yourself in, place cannons, and bombard your rivals. It runs on **Cloudflare Workers + Durable Objects** and needs nothing but a phone browser to play.
 
-- **Campaign vs the Fleet**: single player, six levels of warships (and landing troops) attacking your coast.
+- **Campaign vs the Fleet**: single player, six levels of warships (and landing troops) attacking your coast in waves, on Easy, Normal or Hard. The **Endless Siege** keeps the waves coming until your walls fall, and your best run is saved.
 - **Battle the Computer**: you against 1-3 computer commanders (easy / normal / hard).
 - **Play Online**: 2-4 players in a room, from anywhere. Empty seats can be filled with computer players, and if someone's connection drops, a computer takes over their seat until they return.
 
@@ -10,12 +10,17 @@ A mobile-first browser remake of the arcade classic **Rampart**: wall yourself i
 
 1. **Choose a castle.** Tap a castle in your land; a wall is built around it for you.
 2. **Place cannons** inside your walls. Every enclosed castle gives you one cannon each round, and your home castle gives two (as long as there's room).
-3. **Fire!** Tap where you want a cannonball to land. Balls are slow, so lead moving ships. Knock holes in enemy walls and wreck enemy cannons.
+3. **Fire!** Tap where you want a cannonball to land. Balls are lobbed: long shots fly high and take a while to land (a cannon can't fire again until its ball lands), so every shot counts. Lead moving ships. Knock holes in enemy walls and wreck enemy cannons.
 4. **Build & repair.** Tetris-like wall pieces appear. Close wall loops around castles to claim them. Any area that isn't fully enclosed when combat ends is lost, along with its cannons.
+5. **Fill craters.** Missed shots leave craters that block building for two rounds. In each build phase you can tap **3 craters** in your land to shovel them flat (they glow while you have shovels left).
 
-If none of your castles are enclosed after a build phase, you're out. In a battle, the last commander standing (or the highest score after the final round) wins, and chooses whether the losers **walk the plank** or get **beheaded**.
+If none of your castles are enclosed after a build phase, you're out. In a battle, the last commander standing (or the highest score after the final round) wins and chooses the losers' fate: **pelted with tomatoes** in the stocks, **walk the plank**, **beheading**, **launched by trebuchet**, **fed to the dragon**, the **ducking stool**, or demoted to **court jester**. Win the campaign and you choose the Pirate Admiral's fate; lose it and the pirates choose yours.
 
-Scoring: points for walls, cannons and ships you destroy, plus a bonus after each build phase for castles held, enclosed land, captured **bonus squares** (gold gems), and a **clean-territory** bonus when there are no craters or grunts inside your walls. Missed shots leave craters that block building for two rounds.
+**The fleet** arrives in waves (a war horn sounds each time). Galleons fire broadsides in later levels, and on Normal and Hard the **pirate flagship** (black sails, six hits to sink) leads the final wave of a level.
+
+**Factions** are cosmetic, but each has its own walls and stronghold: the Kingdom's stone keep, a Norse timber longhall behind a log palisade, a Sultanate sandstone palace, a Shogunate pagoda castle, an Aztec sun temple, and a Celtic hill fort. Pick yours on the home screen (or tap your faction badge in an online lobby). Your colour still shows on banners, domes and wall trim.
+
+Scoring: points for walls, cannons and ships you destroy, plus a bonus after each build phase for castles held, enclosed land, captured **bonus squares** (gold gems), and a **clean-territory** bonus when there are no craters or grunts inside your walls.
 
 ### Controls
 
@@ -25,6 +30,7 @@ Scoring: points for walls, cannons and ships you destroy, plus a bonus after eac
 | Place it | Tap the piece (tap elsewhere to jump it there) | Click |
 | Rotate | ⟳ button or two-finger tap | Right-click, mouse wheel, `R` |
 | Fire | Tap the target (use several fingers for rapid fire) | Click |
+| Fill a crater | Tap it (build phase) | Click it, or `F` under the piece |
 | Zoom | 🔍 button | 🔍 button |
 
 In Settings you can switch touch controls to **Direct** mode, where the piece follows your finger (drawn just above it) and drops when you lift your finger. Landscape works best on phones, but portrait works too. The game can be added to the home screen as an app, and single-player modes work offline.
@@ -41,7 +47,7 @@ test/         vitest unit tests (engine, AI planner, map generation, protocol sy
 
 - **One Durable Object per room code.** It holds the lobby, runs the authoritative simulation at 20 ticks/s, and streams compact deltas (changed tiles, new cannonballs, events) over WebSockets. Clients animate cannonballs and ships locally between ticks, and show their own wall placements optimistically.
 - **Solo and vs-computer games run entirely in the browser** using the same engine, so they cost nothing on the server and work offline.
-- **The computer players** choose a target territory, then compute the exact wall tiles needed with a minimum vertex cut (max-flow), which lets them route around craters and reuse old walls. They aim at breach points in enemy walls and lead moving ships.
+- **The computer players** choose a target territory, then compute the exact wall tiles needed with a minimum vertex cut (max-flow), which lets them route around craters and reuse old walls. They shovel craters that are in the way, aim at breach points in enemy walls and lead moving ships.
 
 ## Run locally
 
@@ -53,6 +59,7 @@ npm run dev          # builds the client and serves everything at http://localho
 npm test             # unit tests
 npm run typecheck
 npm run sim -- versus 4 123   # headless AI-vs-AI game, useful for balancing (DRAW=1 prints the map)
+npm run campaign-sim -- 6     # how computer defenders fare against each campaign difficulty
 ```
 
 To try multiplayer on your phone while developing, run `npx wrangler dev --ip 0.0.0.0` and open `http://<your-computer's-LAN-IP>:8787` on phones on the same Wi-Fi.
@@ -90,4 +97,4 @@ Each room is one Durable Object instance that exists only while players are conn
 
 ## Tuning
 
-Phase lengths, scoring, ship levels and cannonball speed are in `src/shared/constants.ts`. AI skill levels are at the top of `src/shared/ai.ts`.
+Phase lengths, scoring, cannonball flight (`flightTime`), crater shovels and the campaign's levels, waves and difficulty scaling (`levelDef`) are in `src/shared/constants.ts`. AI skill levels are at the top of `src/shared/ai.ts`. Faction pixel art is in `src/client/factions.ts` and the finale scenes in `src/client/execution.ts`.

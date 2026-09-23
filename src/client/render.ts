@@ -1,11 +1,12 @@
-import { PLAYER_COLORS, SHIP_RADIUS } from '../shared/constants';
+import { PLAYER_COLORS, SHIP_FLAGSHIP, SHIP_RADIUS, arcHeight } from '../shared/constants';
 import { pieceCells } from '../shared/pieces';
 import { regionBounds } from '../shared/rules';
 import { GameState } from '../shared/types';
 import { Effects } from './effects';
 import { Controller, ViewTransform } from './input';
 import { Session } from './session';
-import { PALETTES, SpriteSet, TS, buildSprites, renderStructures, renderTerrain } from './sprites';
+import { CANNON_METAL } from './factions';
+import { SpriteSet, TS, renderStructures, renderTerrain } from './sprites';
 
 const SEA = '#1a4488';
 
@@ -15,7 +16,7 @@ export class Renderer implements ViewTransform {
   vw = 0;
   vh = 0;
   top = 0;
-  private sprites: SpriteSet = buildSprites();
+  readonly sprites = new SpriteSet();
   private terrain: HTMLCanvasElement | null = null;
   private notMine: HTMLCanvasElement | null = null;
   private struct: HTMLCanvasElement | null = null;
@@ -196,13 +197,14 @@ export class Renderer implements ViewTransform {
     // Optimistic (not yet confirmed) placements.
     if (ctrl.pending && me) {
       ctx.globalAlpha = 0.8;
-      for (const i of ctrl.pending.cells) ctx.drawImage(this.sprites.walls[sess.you % 4][0], sx(i % s.W), sy(Math.floor(i / s.W)), sc + 0.5, sc + 0.5);
+      for (const i of ctrl.pending.cells) ctx.drawImage(this.sprites.walls(me.faction, sess.you)[0], sx(i % s.W), sy(Math.floor(i / s.W)), sc + 0.5, sc + 0.5);
       ctx.globalAlpha = 1;
     }
+    if (s.phase === 'build' && me?.alive) this.drawFillable(sess, ctrl, now);
 
     this.drawCastles(s, sess.you, now);
-    for (const c of s.cannons) this.drawCannon(c.x, c.y, c.owner, c.active, c.angle, c.hp);
-    for (const pc of ctrl.pendingCannons) this.drawCannon(pc.x, pc.y, sess.you, true, -Math.PI / 2, 3);
+    for (const c of s.cannons) this.drawCannon(c.x, c.y, c.owner, c.active, c.angle, c.hp, s.players[c.owner]?.faction ?? 0);
+    for (const pc of ctrl.pendingCannons) this.drawCannon(pc.x, pc.y, sess.you, true, -Math.PI / 2, 3, me?.faction ?? 0);
     this.drawGrunts(s, dt);
     this.drawShips(s, now);
     this.drawOtherCursors(s, sess.you, now);
@@ -219,7 +221,7 @@ export class Renderer implements ViewTransform {
     for (const c of s.castles) {
       const x = this.sx(c.x);
       const y = this.sy(c.y);
-      ctx.drawImage(this.sprites.castles[c.owner + 1] ?? this.sprites.castles[0], x, y, sc * 2, sc * 2);
+      ctx.drawImage(this.sprites.castle(s.players[c.region]?.faction ?? 0, c.owner), x, y, sc * 2, sc * 2);
       const isHome = s.players.some((p) => p.home === c.id);
       if (s.phase === 'select' && c.region === you) {
         const chosen = s.players[you]?.home === c.id;
@@ -252,7 +254,29 @@ export class Renderer implements ViewTransform {
     ctx.stroke();
   }
 
-  drawCannon(tx: number, ty: number, owner: number, active: boolean, angle: number, hp: number) {
+  /** Pulses the craters the player can still shovel flat (tap one to fill it). */
+  private drawFillable(sess: Session, ctrl: Controller, now: number) {
+    const s = sess.state;
+    const me = s.players[sess.you];
+    if (!me || me.fills - ctrl.pendingFills.length <= 0) return;
+    const ctx = this.ctx;
+    const sc = this.cam.s;
+    const pulse = 0.5 + 0.5 * Math.sin(now * 4);
+    ctx.beginPath();
+    for (let i = 0; i < s.W * s.H; i++) {
+      if (!s.crater[i] || s.region[i] !== sess.you || s.wall[i] >= 0 || ctrl.pendingFills.some((f) => f.i === i)) continue;
+      const x = this.sx(i % s.W);
+      const y = this.sy(Math.floor(i / s.W));
+      ctx.rect(x + sc * 0.06, y + sc * 0.06, sc * 0.88, sc * 0.88);
+    }
+    ctx.fillStyle = `rgba(255,214,90,${0.12 + pulse * 0.18})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255,224,110,${0.55 + pulse * 0.45})`;
+    ctx.lineWidth = Math.max(1.5, sc * 0.1);
+    ctx.stroke();
+  }
+
+  drawCannon(tx: number, ty: number, owner: number, active: boolean, angle: number, hp: number, faction = 0) {
     const ctx = this.ctx;
     const sc = this.cam.s;
     const cx = this.sx(tx + 1);
@@ -278,10 +302,12 @@ export class Renderer implements ViewTransform {
     ctx.rotate(angle);
     const len = sc * 1.0;
     const bw = sc * 0.36;
-    ctx.fillStyle = active ? '#1a1a1a' : '#555';
+    const [metal, band] = CANNON_METAL[faction] ?? CANNON_METAL[0];
+    ctx.fillStyle = active ? metal : '#555';
     ctx.fillRect(-sc * 0.15, -bw / 2, len, bw);
-    ctx.fillStyle = active ? '#3a3a3a' : '#777';
+    ctx.fillStyle = active ? band : '#777';
     ctx.fillRect(len - sc * 0.3, -bw * 0.62, sc * 0.18, bw * 1.24);
+    ctx.fillRect(sc * 0.12, -bw * 0.56, sc * 0.1, bw * 1.12);
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.fillRect(-sc * 0.1, -bw / 2 + 1, len - sc * 0.2, Math.max(1, bw * 0.18));
     ctx.restore();
@@ -387,28 +413,39 @@ export class Renderer implements ViewTransform {
       ctx.lineTo(-L * 0.44, Wd * 0.3);
       ctx.quadraticCurveTo(L * 0.15, Wd * 0.36, L * 0.4, 0);
       ctx.fill();
-      // Masts and sails
+      // Masts and sails (the pirate flagship flies black sails).
+      const flagship = sh.kind === SHIP_FLAGSHIP;
       const masts = sh.kind + 1;
+      if (flagship) {
+        ctx.fillStyle = '#c9a227';
+        ctx.fillRect(-L * 0.46, -Wd * 0.3, L * 0.14, Wd * 0.6);
+      }
       for (let m = 0; m < masts; m++) {
         const mx = L * (0.2 - (m / Math.max(1, masts)) * 0.55);
-        ctx.fillStyle = '#f2ead6';
+        ctx.fillStyle = flagship ? '#26222a' : '#f2ead6';
         ctx.fillRect(mx - sc * 0.08, -Wd * 0.62, sc * 0.16, Wd * 1.24);
-        ctx.fillStyle = '#c9bea3';
+        ctx.fillStyle = flagship ? '#4a4450' : '#c9bea3';
         ctx.fillRect(mx - sc * 0.08, -Wd * 0.62, sc * 0.05, Wd * 1.24);
         ctx.fillStyle = '#3b2a1a';
         ctx.beginPath();
         ctx.arc(mx, 0, sc * 0.07, 0, Math.PI * 2);
         ctx.fill();
       }
-      // Pennant
+      // Pennant (a skull and crossbones on the flagship)
       ctx.fillStyle = '#111';
-      ctx.fillRect(-L * 0.5 - sc * 0.22, -sc * 0.08, sc * 0.24, sc * 0.16);
+      const pw = flagship ? sc * 0.5 : sc * 0.24;
+      ctx.fillRect(-L * 0.5 - pw, -sc * (flagship ? 0.18 : 0.08), pw, sc * (flagship ? 0.36 : 0.16));
+      if (flagship) {
+        ctx.fillStyle = '#f2f2f2';
+        ctx.fillRect(-L * 0.5 - pw * 0.62, -sc * 0.08, sc * 0.14, sc * 0.14);
+      }
       ctx.restore();
       // Damage pips
       if (!sh.sinkT && sh.hp > 0 && sh.kind > 0) {
+        const pip = sc * 0.3;
         for (let i = 0; i < sh.hp; i++) {
-          ctx.fillStyle = '#ff4d4d';
-          ctx.fillRect(x - sc * 0.4 + i * sc * 0.3, y - L * 0.55 - sc * 0.2, sc * 0.2, sc * 0.12);
+          ctx.fillStyle = flagship ? '#ffd23a' : '#ff4d4d';
+          ctx.fillRect(x - (sh.hp * pip) / 2 + i * pip + sc * 0.05, y - L * 0.55 - sc * 0.2, sc * 0.2, sc * 0.12);
         }
       }
     }
@@ -438,11 +475,13 @@ export class Renderer implements ViewTransform {
     const sc = this.cam.s;
     const g = ctrl.ghost();
     if (!g) return;
+    const faction = ctrl.me?.faction ?? 0;
     const pulse = 0.5 + 0.5 * Math.sin(now * 8);
+    const set = new Set(g.cells.map(([x, y]) => `${x},${y}`));
     if (g.kind === 'cannon') {
       const [x, y] = g.cells[0];
       ctx.globalAlpha = 0.75;
-      this.drawCannon(x, y, you, g.valid, -Math.PI / 2, 3);
+      this.drawCannon(x, y, you, g.valid, -Math.PI / 2, 3, faction);
       ctx.globalAlpha = 1;
     }
     for (const [x, y] of g.cells) {
@@ -450,8 +489,9 @@ export class Renderer implements ViewTransform {
       const py = this.sy(y);
       if (g.kind === 'piece') {
         if (g.valid) {
+          const mask = (set.has(`${x},${y - 1}`) ? 1 : 0) | (set.has(`${x + 1},${y}`) ? 2 : 0) | (set.has(`${x},${y + 1}`) ? 4 : 0) | (set.has(`${x - 1},${y}`) ? 8 : 0);
           ctx.globalAlpha = 0.85;
-          ctx.drawImage(this.sprites.walls[you % 4][0], px, py, sc, sc);
+          ctx.drawImage(this.sprites.walls(faction, you)[mask], px, py, sc, sc);
           ctx.globalAlpha = 1;
         } else {
           ctx.fillStyle = 'rgba(255,40,40,0.55)';
@@ -463,7 +503,6 @@ export class Renderer implements ViewTransform {
       }
     }
     // Outline around the whole shape.
-    const set = new Set(g.cells.map(([x, y]) => `${x},${y}`));
     ctx.strokeStyle = g.valid ? `rgba(255,255,255,${0.6 + pulse * 0.4})` : ctrl.invalidFlash > 0 ? '#ff2020' : 'rgba(255,90,90,0.9)';
     ctx.lineWidth = Math.max(1.5, sc * 0.1);
     ctx.beginPath();
@@ -499,12 +538,14 @@ export class Renderer implements ViewTransform {
       const gx = b.fx + (b.tx - b.fx) * t;
       const gy = b.fy + (b.ty - b.fy) * t;
       const dist = Math.hypot(b.tx - b.fx, b.ty - b.fy);
-      const h = Math.sin(Math.PI * t) * Math.min(5, 0.6 + dist * 0.22);
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      // Long shots are lobbed high: the shadow shrinks while the ball climbs towards the viewer.
+      const h = Math.sin(Math.PI * t) * arcHeight(dist);
+      const shade = 1 / (1 + h * 0.08);
+      ctx.fillStyle = `rgba(0,0,0,${0.15 + 0.2 * shade})`;
       ctx.beginPath();
-      ctx.ellipse(this.sx(gx), this.sy(gy), sc * 0.2, sc * 0.13, 0, 0, Math.PI * 2);
+      ctx.ellipse(this.sx(gx), this.sy(gy), sc * 0.2 * (0.5 + shade * 0.5), sc * 0.13 * (0.5 + shade * 0.5), 0, 0, Math.PI * 2);
       ctx.fill();
-      const r = sc * 0.17 * (1 + h * 0.09);
+      const r = sc * 0.17 * (1 + Math.min(h, 10) * 0.07);
       const bx = this.sx(gx);
       const by = this.sy(gy - h);
       ctx.fillStyle = b.owner < 0 ? '#2a1010' : '#111';
@@ -548,8 +589,8 @@ export class Renderer implements ViewTransform {
   }
 }
 
-/** Draws a piece preview into a small canvas (HUD "next piece"). */
-export function drawPiecePreview(c: HTMLCanvasElement, shape: number, rot: number, color: number) {
+/** Draws a piece preview into a small canvas (HUD "next piece"), in the player's own wall style. */
+export function drawPiecePreview(c: HTMLCanvasElement, sp: SpriteSet, shape: number, rot: number, color: number, faction: number) {
   const ctx = c.getContext('2d')!;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const size = c.clientWidth || 48;
@@ -558,6 +599,7 @@ export function drawPiecePreview(c: HTMLCanvasElement, shape: number, rot: numbe
     c.height = Math.round(size * dpr);
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, size, size);
   if (shape < 0) return;
   const cells = pieceCells(shape, rot);
@@ -568,19 +610,13 @@ export function drawPiecePreview(c: HTMLCanvasElement, shape: number, rot: numbe
   const w = Math.max(...xs) - minX + 1;
   const h = Math.max(...ys) - minY + 1;
   const cs = Math.floor(Math.min((size - 8) / Math.max(w, h), 16));
-  const ox = (size - w * cs) / 2;
-  const oy = (size - h * cs) / 2;
-  const pal = PALETTES[color % 4];
+  const ox = Math.round((size - w * cs) / 2);
+  const oy = Math.round((size - h * cs) / 2);
+  const set = new Set(cells.map(([x, y]) => `${x},${y}`));
+  const walls = sp.walls(faction, color);
   for (const [x, y] of cells) {
-    const px = ox + (x - minX) * cs;
-    const py = oy + (y - minY) * cs;
-    ctx.fillStyle = `rgb(${pal.wallMid.join(',')})`;
-    ctx.fillRect(px, py, cs, cs);
-    ctx.fillStyle = `rgb(${pal.wallLight.join(',')})`;
-    ctx.fillRect(px, py, cs, Math.max(1, cs * 0.2));
-    ctx.strokeStyle = `rgb(${pal.wallEdge.join(',')})`;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(px + 0.5, py + 0.5, cs - 1, cs - 1);
+    const mask = (set.has(`${x},${y - 1}`) ? 1 : 0) | (set.has(`${x + 1},${y}`) ? 2 : 0) | (set.has(`${x},${y + 1}`) ? 4 : 0) | (set.has(`${x - 1},${y}`) ? 8 : 0);
+    ctx.drawImage(walls[mask], ox + (x - minX) * cs, oy + (y - minY) * cs, cs, cs);
   }
 }
 
