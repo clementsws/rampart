@@ -1,0 +1,11 @@
+{
+  "name": "Rampart",
+  "short_name": "Rampart",
+  "description": "Build walls, place cannons, fire! Castle strategy for 1-4 players.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#101826",
+  "theme_color": "#101826",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

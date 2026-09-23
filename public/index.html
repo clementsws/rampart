@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#101826" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="description" content="Rampart: build castle walls, place cannons and bombard your rivals. Play solo against the fleet, against the computer, or online with up to 4 players." />
+    <title>Rampart</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <!-- In-game HUD -->
+    <div id="hud" hidden>
+      <div id="topbar">
+        <div id="scores"></div>
+        <div id="phase"><span id="phase-name"></span><span id="phase-timer"></span></div>
+        <div id="round"></div>
+        <button id="btn-menu" class="icon" aria-label="Menu">☰</button>
+      </div>
+      <div id="net-status" hidden>Reconnecting…</div>
+      <div id="banner" aria-live="polite"></div>
+      <div id="hint"></div>
+      <div id="controls">
+        <button id="btn-zoom" class="round" aria-label="Zoom">🔍</button>
+        <div id="next-wrap"><span>NEXT</span><canvas id="next-piece"></canvas></div>
+        <div id="cannon-count"></div>
+        <button id="btn-rotate" class="round big" aria-label="Rotate piece">⟳</button>
+      </div>
+      <div id="summary" class="panel" hidden></div>
+      <div id="gameover" class="panel" hidden>
+        <h2 id="go-title"></h2>
+        <div class="go-body">
+          <div>
+            <div id="go-standings"></div>
+            <div id="go-choose" hidden>
+              <p>Your rival is at your mercy. Choose their fate:</p>
+              <div class="row">
+                <button id="btn-plank" class="btn">🏴‍☠️ Walk the plank</button>
+                <button id="btn-behead" class="btn">🪓 Behead</button>
+              </div>
+            </div>
+          </div>
+          <canvas id="exec-canvas" hidden></canvas>
+        </div>
+        <div class="row">
+          <button id="btn-again" class="btn primary">Play again</button>
+          <button id="btn-quit" class="btn">Main menu</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Menus -->
+    <div id="screens">
+      <section id="screen-home" class="screen home">
+        <div class="cols">
+        <div>
+          <h1 class="title">RAMPART</h1>
+          <p class="tag">Build walls. Place cannons. Fire!</p>
+          <label class="field">Your name <input id="in-name" maxlength="16" autocomplete="nickname" placeholder="Knight" /></label>
+        </div>
+        <div class="stack">
+          <button class="btn primary" data-go="campaign">⚓ Campaign vs the Fleet</button>
+          <button class="btn primary" data-go="screen-battle">⚔️ Battle the Computer</button>
+          <button class="btn primary" data-go="screen-online">🌐 Play Online (2-4)</button>
+          <div class="row">
+            <button class="btn" data-go="screen-howto">How to play</button>
+            <button class="btn" data-go="screen-settings">Settings</button>
+          </div>
+        </div>
+        </div>
+      </section>
+
+      <section id="screen-battle" class="screen" hidden>
+        <h2>Battle the Computer</h2>
+        <div class="cols">
+        <div>
+        <div class="field">Opponents
+          <div class="seg" data-seg="opponents"><button data-v="1" class="on">1</button><button data-v="2">2</button><button data-v="3">3</button></div>
+        </div>
+        <div class="field">Difficulty
+          <div class="seg" data-seg="difficulty"><button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button></div>
+        </div>
+        </div>
+        <div>
+        <div class="field">Rounds
+          <div class="seg" data-seg="rounds"><button data-v="5">5</button><button data-v="8" class="on">8</button><button data-v="12">12</button></div>
+        </div>
+        <div class="stack">
+          <button class="btn primary" id="btn-battle-start">Start battle</button>
+          <button class="btn" data-go="screen-home">Back</button>
+        </div>
+        </div>
+        </div>
+      </section>
+
+      <section id="screen-online" class="screen" hidden>
+        <h2>Play Online</h2>
+        <p class="small">Up to 4 players. Empty seats can be filled with computer players.</p>
+        <div class="stack">
+          <button class="btn primary" id="btn-create">Create a room</button>
+          <div class="row join">
+            <input id="in-code" maxlength="6" placeholder="CODE" autocapitalize="characters" autocomplete="off" />
+            <button class="btn primary" id="btn-join">Join</button>
+          </div>
+          <button class="btn" data-go="screen-home">Back</button>
+        </div>
+      </section>
+
+      <section id="screen-lobby" class="screen" hidden>
+        <h2>Room <span id="lobby-code" class="code"></span></h2>
+        <div class="cols">
+        <div id="lobby-slots"></div>
+        <div>
+        <div class="row">
+          <button class="btn" id="btn-share">Share invite</button>
+          <button class="btn" id="btn-copy">Copy link</button>
+        </div>
+        <div class="field" id="lobby-rounds-wrap" style="margin-top:10px">Rounds
+          <div class="seg" data-seg="lobby-rounds"><button data-v="5">5</button><button data-v="8">8</button><button data-v="12">12</button></div>
+        </div>
+        <p id="lobby-status" class="small"></p>
+        <div class="stack">
+          <button class="btn primary" id="btn-lobby-start">Start game</button>
+          <button class="btn" id="btn-leave">Leave room</button>
+        </div>
+        </div>
+        </div>
+      </section>
+
+      <section id="screen-howto" class="screen" hidden>
+        <h2>How to play</h2>
+        <div class="howto cols">
+          <p><b>1. Choose a castle.</b> Tap one of the castles in your land. A wall is built around it for you.</p>
+          <p><b>2. Place cannons</b> inside your walls. Each castle you hold gives you a cannon each round (your home castle gives two).</p>
+          <p><b>3. Fire!</b> Tap where you want a cannonball to land. Balls are slow, so lead moving ships. Knock holes in enemy walls and wreck their cannons.</p>
+          <p><b>4. Build &amp; repair.</b> Wall pieces appear. <b>Drag anywhere</b> to slide the piece, <b>tap it</b> to drop it, tap elsewhere to jump it there. <b>⟳</b> or a two-finger tap rotates. Close a wall loop around castles to claim them.</p>
+          <p>Anything not fully enclosed after combat is lost, along with its cannons. Craters (from missed shots) block building for a couple of rounds.</p>
+          <p><b>Lose all your castles and you're out.</b> Campaign: survive 6 levels of ships and landing troops. Battle: last player standing, or the highest score after the final round, wins — and decides the loser's fate.</p>
+          <p class="small">Desktop: mouse to aim/move, click to place/fire, right-click or R to rotate, arrow keys + space also work.</p>
+        </div>
+        <button class="btn" data-go="screen-home">Back</button>
+      </section>
+
+      <section id="screen-settings" class="screen" hidden>
+        <h2>Settings</h2>
+        <div class="field">Sound
+          <div class="seg" data-seg="sound"><button data-v="on" class="on">On</button><button data-v="off">Off</button></div>
+        </div>
+        <div class="field">Touch controls
+          <div class="seg" data-seg="touch"><button data-v="drag" class="on">Drag &amp; tap</button><button data-v="direct">Direct</button></div>
+          <span class="small">Drag &amp; tap: slide pieces like a trackpad and tap to drop. Direct: the piece follows your finger (shown above it) and drops when you lift.</span>
+        </div>
+        <button class="btn" data-go="back">Back</button>
+      </section>
+
+      <section id="screen-pause" class="screen" hidden>
+        <h2>Paused</h2>
+        <div class="stack">
+          <button class="btn primary" id="btn-resume">Resume</button>
+          <button class="btn" data-go="screen-settings">Settings</button>
+          <button class="btn" id="btn-pause-quit">Quit to menu</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="rotate-hint">↻ Turn your phone sideways for a bigger battlefield</div>
+    <div id="toast" hidden></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
