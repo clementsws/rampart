@@ -1,9 +1,23 @@
+import {
+  ACHIEVEMENTS,
+  GameKind,
+  HAT_NAMES,
+  Reward,
+  TITLES,
+  TRAIL_NAMES,
+  achievement,
+  isUnlocked,
+  recordFor,
+  styledName,
+  unlockedBy,
+} from '../shared/career';
 import { AI_NAMES, FACTIONS, PLAYER_COLORS, SOLO_LEVELS, levelDef, validFaction } from '../shared/constants';
 import { GameConfig } from '../shared/engine';
 import { LobbyInfo, ServerMsg } from '../shared/protocol';
-import { Difficulty, EXECUTIONS, GameEvent, GameState } from '../shared/types';
+import { Difficulty, EXECUTIONS, GameEvent, GameState, HATS, Look, Player, TRAILS } from '../shared/types';
+import { AccountClient } from './account';
 import { buzz, sfx } from './audio';
-import { Beat, ExecutionScene, FATES, PIRATE_ADMIRAL, figureFor } from './execution';
+import { Beat, ExecutionScene, FATES, PIRATE_ADMIRAL, drawFigurePreview, figureFor } from './execution';
 import { Controller, TouchMode } from './input';
 import { Net } from './net';
 import { Renderer, drawPiecePreview } from './render';
@@ -60,7 +74,11 @@ function loadBest(mode: string, diff: string): Best | null {
   }
 }
 
+const account = new AccountClient();
+
 function playerName(): string {
+  // Signed-in commanders always play under their account name.
+  if (account.signedIn) return account.profile!.name;
   const v = ($<HTMLInputElement>('in-name').value || '').trim().slice(0, 16);
   if (v !== settings.name) {
     settings.name = v;
@@ -86,6 +104,9 @@ let mySlot = -1;
 let screenStack: string[] = [];
 let execScene: ExecutionScene | null = null;
 let wakeLock: { release(): Promise<void> } | null = null;
+/** Id of the local game being played, and whether its result has been saved. */
+let localGameId = '';
+let recorded = false;
 
 function startDemo() {
   demo = true;
@@ -144,6 +165,7 @@ function enterGame() {
 }
 
 function leaveGame() {
+  recordLocalGame();
   $('hud').hidden = true;
   document.body.classList.remove('ingame');
   hideGameOver();
@@ -201,7 +223,10 @@ function tryFullscreen() {
 // ---------------------------------------------------------------- local games
 
 function startLocal(cfg: GameConfig) {
+  recordLocalGame();
+  recorded = false;
   localConfig = cfg;
+  localGameId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   setSession(new LocalSession(cfg, 0));
   enterGame();
 }
@@ -210,7 +235,7 @@ function startCampaign() {
   startLocal({
     mode: 'solo',
     campaign: { difficulty: settings.campDiff, endless: settings.campMode === 'endless' },
-    players: [{ name: playerName(), ai: false, difficulty: 'normal', faction: settings.faction }],
+    players: [{ name: playerName(), ai: false, difficulty: 'normal', faction: settings.faction, look: account.look }],
   });
 }
 
@@ -267,7 +292,7 @@ function startBattle() {
   const n = Number(segValue('opponents')) || 1;
   const difficulty = (segValue('difficulty') || 'normal') as Difficulty;
   const rounds = Number(segValue('rounds')) || 8;
-  const players: GameConfig['players'] = [{ name: playerName(), ai: false, difficulty, faction: settings.faction }];
+  const players: GameConfig['players'] = [{ name: playerName(), ai: false, difficulty, faction: settings.faction, look: account.look }];
   for (let i = 1; i <= n; i++) players.push({ name: AI_NAMES[i], ai: true, difficulty });
   startLocal({ mode: 'versus', rounds, players });
 }
@@ -294,7 +319,7 @@ function joinRoom(code: string) {
   history.replaceState(null, '', `?room=${code}`);
   net = new Net(
     code,
-    () => ({ t: 'hello', name: playerName(), token: store.get('token.' + code), faction: settings.faction }),
+    () => ({ t: 'hello', name: playerName(), token: store.get('token.' + code), faction: settings.faction, auth: account.token || undefined }),
     (m) => onServer(code, m),
     (ok) => {
       $('net-status').hidden = ok;
@@ -337,6 +362,10 @@ function onServer(code: string, m: ServerMsg) {
     case 'error':
       toast(m.msg);
       break;
+    case 'honours':
+      showHonours(m.ids);
+      void account.refresh();
+      break;
     case 'pong':
       break;
   }
@@ -359,6 +388,12 @@ function renderLobby() {
     const tags: string[] = [];
     if (s.kind === 'human') {
       name.textContent = s.name;
+      if (s.title) {
+        const t = document.createElement('span');
+        t.className = 'ttl';
+        t.textContent = ` ${s.title}`;
+        name.appendChild(t);
+      }
       if (i === lobby!.host) tags.push('host');
       if (i === mySlot) tags.push('you');
       if (!s.connected) tags.push('offline');
@@ -729,16 +764,10 @@ function showGameOver(sess: Session) {
       b.onclick = () => session?.act({ type: 'execute', method: m });
       fates.append(b);
     }
-    const ranked = [...s.players].sort((a, b) => b.score - a.score);
-    $('go-standings').innerHTML =
-      `<table><tr><th>Commander</th><th>Castles</th><th>Score</th></tr>` +
-      ranked
-        .map(
-          (p) =>
-            `<tr><td><span style="color:${PLAYER_COLORS[p.id]}">■</span> ${escapeHtml(p.name)}${p.id === s.winner && !s.solo ? ' 👑' : ''}${p.alive ? '' : ' ☠'}</td><td>${p.castles}</td><td class="tot">${p.score}</td></tr>`,
-        )
-        .join('') +
-      '</table>';
+    renderReport(s, sess.you);
+    const hon = $('go-honours');
+    hon.hidden = sess.you < 0 || account.signedIn;
+    hon.innerHTML = '<p class="small">Sign in from the main menu to keep your stats and earn honours.</p>';
     const online = sess.online;
     const isHost = lobby ? lobby.host === mySlot : true;
     $('btn-again').textContent = online ? (isHost ? 'Back to lobby' : 'Lobby') : 'Play again';
@@ -753,21 +782,134 @@ function showGameOver(sess: Session) {
     const w = s.players[s.winner];
     wait.textContent = s.solo ? 'The pirates are deciding your fate…' : `${w?.name ?? 'The victor'} is deciding the losers' fate…`;
   }
+  // A local game is saved once the losers' fate is sealed (the room saves online games).
+  if (s.execution) recordLocalGame();
   if (s.execution && execShown !== s.execution) {
     execShown = s.execution;
     const c = $<HTMLCanvasElement>('exec-canvas');
     c.hidden = false;
     $('gameover').classList.add('with-exec');
     execScene?.stop();
-    let victims = s.players.filter((p) => p.id !== s.winner).map((p) => figureFor(p.name, p.id));
-    let executioner = figureFor(s.players[s.winner]?.name ?? '', s.winner);
+    let victims = s.players.filter((p) => p.id !== s.winner).map((p) => figureFor(p.name, p.id, p.look));
+    const w = s.players[s.winner];
+    let executioner = figureFor(w?.name ?? '', s.winner, w?.look);
     if (s.solo) {
-      const me = figureFor(s.players[0]?.name ?? 'You', 0);
+      const me = figureFor(s.players[0]?.name ?? 'You', 0, s.players[0]?.look);
       victims = s.solo.victory ? [PIRATE_ADMIRAL] : [me];
       executioner = s.solo.victory ? me : PIRATE_ADMIRAL;
     }
     execScene = new ExecutionScene(c, s.execution, victims, executioner, playBeat);
   }
+}
+
+// ---------------------------------------------------------- end-of-game report
+
+interface ReportRow {
+  label: string;
+  value: (p: Player) => number | null;
+  fmt?: (v: number) => string;
+  /** Lower is better (for highlighting the best value). */
+  low?: boolean;
+  only?: 'battle' | 'solo';
+}
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+const ratio = (a: number, b: number) => (b > 0 ? a / b : null);
+
+const REPORT: ReportRow[] = [
+  { label: 'Score', value: (p) => p.score, fmt: (v) => v.toLocaleString() },
+  { label: 'Castles held', value: (p) => p.castles },
+  { label: 'Ships sunk', value: (p) => p.stats.ships, only: 'solo' },
+  { label: 'Walls destroyed', value: (p) => p.stats.walls, only: 'battle' },
+  { label: 'Walls lost', value: (p) => p.stats.wallsLost, low: true },
+  { label: 'Cannons placed', value: (p) => p.stats.cannons },
+  { label: 'Cannonballs fired', value: (p) => p.stats.shots },
+  { label: 'Walls hit per shot', value: (p) => ratio(p.stats.walls, p.stats.shots), fmt: (v) => v.toFixed(2), only: 'battle' },
+  { label: 'Hit rate', value: (p) => ratio(p.stats.hits, p.stats.shots), fmt: pct, only: 'solo' },
+  { label: 'Cannons wrecked', value: (p) => p.stats.cannonsKilled, only: 'battle' },
+  { label: 'Castle area (largest)', value: (p) => p.stats.maxLand, fmt: (v) => `${v} tiles` },
+  { label: 'Troops squashed', value: (p) => p.stats.grunts, only: 'solo' },
+  { label: 'Craters filled', value: (p) => p.stats.craters },
+];
+
+/** Everyone's stats side by side, best value in each row picked out. */
+function renderReport(s: GameState, you: number) {
+  const ranked = [...s.players].sort((a, b) => b.score - a.score);
+  const many = ranked.length > 1;
+  const head = ranked
+    .map((p) => {
+      const mark = `${p.id === s.winner && !s.solo ? ' 👑' : ''}${p.alive ? '' : ' ☠'}`;
+      return `<th class="${p.id === you ? 'me' : ''}"><span class="pn"><span style="color:${PLAYER_COLORS[p.id]}">■</span> ${escapeHtml(p.name)}</span>${mark}</th>`;
+    })
+    .join('');
+  const rows = REPORT.filter((r) => !r.only || r.only === (s.solo ? 'solo' : 'battle'))
+    .map((r) => {
+      const vals = ranked.map((p) => r.value(p));
+      const nums = vals.filter((v): v is number => v !== null);
+      const best = nums.length ? (r.low ? Math.min(...nums) : Math.max(...nums)) : null;
+      const spread = nums.length > 1 && Math.min(...nums) !== Math.max(...nums);
+      const cells = vals
+        .map((v, i) => {
+          const cls = [ranked[i].id === you ? 'me' : '', many && spread && v === best ? 'best' : ''].filter(Boolean).join(' ');
+          return `<td class="${cls}">${v === null ? '–' : (r.fmt ?? String)(v)}</td>`;
+        })
+        .join('');
+      return `<tr><td>${r.label}</td>${cells}</tr>`;
+    })
+    .join('');
+  $('go-report').innerHTML = `<table class="report"><tr><th>${s.solo ? 'Your report' : 'Battle report'}</th>${head}</tr>${rows}</table>`;
+}
+
+function rewardText(r: Reward): string {
+  if (r.title) return `title “${r.title}”`;
+  if (r.hat) return `victory hat: ${HAT_NAMES[r.hat]}`;
+  if (r.trail) return `cannonball trail: ${TRAIL_NAMES[r.trail]}`;
+  return '';
+}
+
+/** Lists honours just earned (on the end screen, or as a toast if it has closed). */
+function showHonours(ids: string[]) {
+  const list = ids.map(achievement).filter((a) => !!a);
+  if (!list.length) return;
+  sfx.fanfare('good');
+  if (!goShown) {
+    toast(`🏅 New honour${list.length > 1 ? 's' : ''}: ${list.map((a) => a!.name).join(', ')}`, 5000);
+    return;
+  }
+  const el = $('go-honours');
+  el.hidden = false;
+  el.innerHTML =
+    `<p class="hon-title">🏅 New honour${list.length > 1 ? 's' : ''}!</p>` +
+    list
+      .map(
+        (a) =>
+          `<div class="honour"><span class="ic">${a!.icon}</span><span><b>${escapeHtml(a!.name)}</b><small>Unlocked ${escapeHtml(rewardText(a!.reward))}</small></span></div>`,
+      )
+      .join('');
+}
+
+/** Saves a finished campaign or computer battle to the signed-in commander's record. */
+function recordLocalGame() {
+  const sess = session;
+  if (recorded || demo || !sess || sess.online || !localConfig || sess.you < 0 || sess.state.phase !== 'gameover') return;
+  recorded = true;
+  if (!account.signedIn) return;
+  const s = sess.state;
+  const kind: GameKind = s.solo ? (s.solo.endless ? 'endless' : 'campaign') : 'battle';
+  const rec = recordFor(s, sess.you, kind, localGameId);
+  const el = $('go-honours');
+  const onScreen = session === sess && goShown;
+  if (onScreen) {
+    el.hidden = false;
+    el.innerHTML = '<p class="small">Saving to your record…</p>';
+  }
+  void account.submit(rec).then((ids) => {
+    const still = session === sess && goShown;
+    if (ids?.length) showHonours(ids);
+    else if (still) {
+      el.innerHTML = ids ? '<p class="small">✓ Saved to your record.</p>' : '<p class="small">Offline: this game will be saved when you are back online.</p>';
+    }
+  });
 }
 
 function hideGameOver() {
@@ -852,6 +994,193 @@ function frame(t: number) {
   requestAnimationFrame(frame);
 }
 
+// ------------------------------------------------------------------ accounts
+
+let acctMode: 'login' | 'signup' = 'login';
+let profTab = 'record';
+
+function updateAccountUI() {
+  const p = account.profile;
+  $('acct-guest').hidden = !!p;
+  $('acct-card').hidden = !p;
+  if (p) {
+    $('acct-name-show').textContent = styledName(p.name, account.look);
+    const wins = p.career.wins;
+    $('acct-sum').textContent = `${wins} win${wins === 1 ? '' : 's'} · ${Object.keys(p.career.honours).length}/${ACHIEVEMENTS.length} honours`;
+    drawFigurePreview($<HTMLCanvasElement>('acct-figure'), PLAYER_COLORS[0], account.look.hat);
+  }
+  if (!$('screen-profile').hidden) {
+    if (p) renderProfile();
+    else {
+      screenStack = [];
+      show('screen-home');
+    }
+  }
+}
+
+function setAcctMode(m: 'login' | 'signup') {
+  acctMode = m;
+  document.querySelectorAll<HTMLElement>('.seg[data-seg="acct-mode"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === m));
+  $('acct-submit').textContent = m === 'login' ? 'Sign in' : 'Create account';
+  $<HTMLInputElement>('acct-pass').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+  $('acct-msg').textContent = m === 'signup' ? 'Choose a name (3-16 letters) and a password of 6 or more characters.' : '';
+}
+
+async function submitAccount(e: Event) {
+  e.preventDefault();
+  const name = $<HTMLInputElement>('acct-user').value.trim();
+  const pass = $<HTMLInputElement>('acct-pass').value;
+  const btn = $<HTMLButtonElement>('acct-submit');
+  btn.disabled = true;
+  $('acct-msg').textContent = acctMode === 'login' ? 'Opening the gates…' : 'Carving your name in stone…';
+  const err = await account.enter(acctMode, name, pass);
+  btn.disabled = false;
+  if (err) {
+    $('acct-msg').textContent = err;
+    return;
+  }
+  $<HTMLInputElement>('acct-pass').value = '';
+  $('acct-msg').textContent = '';
+  toast(`Welcome, ${account.profile!.name}!`);
+  back();
+}
+
+const KIND_LABEL: Record<GameKind, string> = { campaign: '⚓ Campaign', endless: '🌊 Endless siege', battle: '⚔️ vs Computer', online: '🌐 Online' };
+
+function ago(t: number): string {
+  const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} min ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} h ago`;
+  const d = Math.round(h / 24);
+  return d < 14 ? `${d} day${d > 1 ? 's' : ''} ago` : new Date(t).toLocaleDateString();
+}
+
+function renderProfile() {
+  const p = account.profile;
+  if (!p) return;
+  $('prof-name').textContent = styledName(p.name, account.look);
+  const since = new Date(p.since).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  const waiting = account.pending;
+  $('prof-sub').textContent = `Commander since ${since}${waiting ? ` · ${waiting} game${waiting > 1 ? 's' : ''} waiting to be saved` : ''}`;
+  drawFigurePreview($<HTMLCanvasElement>('prof-figure'), PLAYER_COLORS[0], account.look.hat);
+  document.querySelectorAll<HTMLElement>('.seg[data-seg="prof-tab"] button').forEach((b) => b.classList.toggle('on', b.dataset.v === profTab));
+  const body = $('prof-body');
+  if (profTab === 'honours') body.innerHTML = honoursHtml();
+  else if (profTab === 'armoury') renderArmoury(body);
+  else if (profTab === 'hall') void renderHall(body);
+  else body.innerHTML = recordHtml();
+}
+
+function recordHtml(): string {
+  const c = account.profile!.career;
+  const t = c.totals;
+  const tiles: [string, string][] = [
+    ['Games', String(c.games)],
+    ['Wins', String(c.wins)],
+    ['Win rate', c.games ? pct(c.wins / c.games) : '–'],
+    ['Honours', `${Object.keys(c.honours).length}/${ACHIEVEMENTS.length}`],
+  ];
+  const modes = (Object.keys(KIND_LABEL) as GameKind[])
+    .map((k) => {
+      const m = c.modes[k];
+      const lvl = (k === 'campaign' || k === 'endless') && m.level ? ` <span class="small">(lvl ${m.level})</span>` : '';
+      return `<tr><td>${KIND_LABEL[k]}</td><td>${m.played}</td><td>${m.won}</td><td>${m.best ? m.best.toLocaleString() : '–'}${lvl}</td></tr>`;
+    })
+    .join('');
+  const shotRatio = (n: number, f: (v: number) => string) => (t.shots ? f(n / t.shots) : '–');
+  const dealt = EXECUTIONS.reduce((a, m) => a + (c.dealt[m] ?? 0), 0);
+  const fav = EXECUTIONS.reduce((a, m) => ((c.dealt[m] ?? 0) > (c.dealt[a] ?? 0) ? m : a), EXECUTIONS[0]);
+  const totals: [string, string | number][] = [
+    ['Walls destroyed', t.walls],
+    ['Walls lost', t.wallsLost],
+    ['Cannons placed', t.cannons],
+    ['Cannonballs fired', t.shots],
+    ['Walls hit per shot', shotRatio(t.walls, (v) => v.toFixed(2))],
+    ['Hit rate', shotRatio(t.hits, pct)],
+    ['Cannons wrecked', t.cannonsKilled],
+    ['Cannons lost', t.cannonsLost],
+    ['Ships sunk', t.ships],
+    ['Flagships sunk', t.flagships],
+    ['Troops squashed', t.grunts],
+    ['Wall pieces laid', t.pieces],
+    ['Craters filled', t.craters],
+    ['Castles claimed', t.castles],
+    ['Largest castle area', `${t.maxLand} tiles`],
+    ['Most castles held', t.maxCastles],
+    ['Rounds survived', t.rounds],
+    ['Punishments dealt', dealt ? `${dealt} (mostly ${FATES[fav].icon} ${FATES[fav].label.toLowerCase()})` : 0],
+    ['Punishments suffered', c.suffered],
+  ];
+  const recent = account.profile!.recent;
+  const recentHtml = recent.length
+    ? recent
+        .map((g) => {
+          const diff = g.kind === 'online' ? '' : ` · ${g.difficulty}`;
+          const res = g.won ? '<b class="won">Won</b>' : g.kind === 'endless' ? `level ${g.level}` : g.players > 1 ? `${ordinal(g.rank)} of ${g.players}` : 'Lost';
+          return `<li><span>${KIND_LABEL[g.kind]}${diff}</span><span>${res} · ${g.score.toLocaleString()}</span><span class="small">${ago(g.at)}</span></li>`;
+        })
+        .join('')
+    : '<li class="small">No games yet. Go and knock some walls down!</li>';
+  return (
+    `<div class="tiles">${tiles.map(([k, v]) => `<div><b>${v}</b><span>${k}</span></div>`).join('')}</div>` +
+    `<table class="modes"><tr><th>Mode</th><th>Played</th><th>Won</th><th>Best score</th></tr>${modes}</table>` +
+    `<h3>Career totals</h3><dl class="totals">${totals.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>` +
+    `<h3>Recent games</h3><ul class="recent">${recentHtml}</ul>`
+  );
+}
+
+const ordinal = (n: number) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
+
+function honoursHtml(): string {
+  const h = account.profile!.career.honours;
+  return `<div class="honours">${ACHIEVEMENTS.map((a) => {
+    const at = h[a.id];
+    const note = at ? `Earned ${new Date(at).toLocaleDateString()} · unlocked ${rewardText(a.reward)}` : `Unlocks ${rewardText(a.reward)}`;
+    return `<div class="honour ${at ? 'got' : 'locked'}"><span class="ic">${at ? a.icon : '🔒'}</span><span><b>${escapeHtml(a.name)}</b><small>${escapeHtml(a.desc)}</small><small class="rw">${escapeHtml(note)}</small></span></div>`;
+  }).join('')}</div>`;
+}
+
+const TRAIL_ICONS: Record<string, string> = { none: '●', smoke: '💨', fire: '🔥', gold: '✨', arcane: '🔮' };
+
+function renderArmoury(body: HTMLElement) {
+  const h = account.profile!.career.honours;
+  const look = account.look;
+  const item = (kind: keyof Look, value: string, label: string, extra = '') => {
+    const ok = isUnlocked(kind, value, h);
+    const by = unlockedBy(kind, value);
+    const lock = ok ? '' : `<small>🔒 ${escapeHtml(by?.name ?? '')}</small>`;
+    return `<button type="button" class="arm${look[kind] === value ? ' on' : ''}" data-kind="${kind}" data-v="${escapeHtml(value)}"${ok ? '' : ' disabled'}>${extra}<span>${escapeHtml(label)}</span>${lock}</button>`;
+  };
+  body.innerHTML =
+    `<h3>Title</h3><div class="arms">${item('title', '', 'No title')}${TITLES.map((t) => item('title', t, t)).join('')}</div>` +
+    `<h3>Victory hat</h3><div class="arms hats">${HATS.map((x) => item('hat', x, HAT_NAMES[x], '<canvas></canvas>')).join('')}</div>` +
+    `<h3>Cannonball trail</h3><div class="arms">${TRAILS.map((x) => item('trail', x, TRAIL_NAMES[x], `<i>${TRAIL_ICONS[x]}</i>`)).join('')}</div>` +
+    '<p class="small">Your title follows your name, your hat is worn in the finale, and your trail follows every cannonball you fire. Online, everyone sees them.</p>';
+  body.querySelectorAll<HTMLElement>('.hats .arm').forEach((b) => drawFigurePreview(b.querySelector('canvas')!, PLAYER_COLORS[0], b.dataset.v as Look['hat']));
+}
+
+async function renderHall(body: HTMLElement) {
+  body.innerHTML = '<p class="small">Summoning the heralds…</p>';
+  const rows = await account.hall();
+  if (profTab !== 'hall' || $('screen-profile').hidden) return;
+  if (!rows) {
+    body.innerHTML = '<p class="small">The heralds cannot be reached. Are you online?</p>';
+    return;
+  }
+  const me = account.profile?.name;
+  body.innerHTML =
+    `<table class="hall"><tr><th>#</th><th>Commander</th><th>Wins</th><th>Games</th><th>Honours</th><th>Best</th></tr>` +
+    rows
+      .map(
+        (r, i) =>
+          `<tr class="${r.name === me ? 'me' : ''}"><td>${i + 1}</td><td>${escapeHtml(r.name)}${r.title ? ` <span class="ttl">${escapeHtml(r.title)}</span>` : ''}</td><td>${r.wins}</td><td>${r.games}</td><td>${r.honours}</td><td>${r.best.toLocaleString()}</td></tr>`,
+      )
+      .join('') +
+    '</table>';
+}
+
 // --------------------------------------------------------------------- wiring
 
 function wire() {
@@ -867,7 +1196,12 @@ function wire() {
     else if (go === 'campaign') startCampaign();
     else {
       if (go === 'screen-campaign') updateCampaignScreen();
+      if (go === 'screen-account') setAcctMode(acctMode);
       show(go);
+      if (go === 'screen-profile') {
+        renderProfile();
+        void account.refresh();
+      }
     }
   });
 
@@ -899,7 +1233,28 @@ function wire() {
         settings.campMode = v === 'endless' ? 'endless' : 'campaign';
         store.set('campMode', v);
         updateCampaignScreen();
+      } else if (name === 'acct-mode') {
+        setAcctMode(v === 'signup' ? 'signup' : 'login');
+      } else if (name === 'prof-tab') {
+        profTab = v;
+        renderProfile();
       }
+    });
+  });
+
+  $('acct-form').addEventListener('submit', (e) => void submitAccount(e));
+  $('btn-signout').onclick = async () => {
+    await account.logout();
+    toast('Signed out. Farewell!');
+  };
+  $('prof-body').addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button.arm');
+    if (!b || b.disabled || b.classList.contains('on')) return;
+    const kind = b.dataset.kind as keyof Look;
+    b.classList.add('busy');
+    void account.wear({ ...account.look, [kind]: b.dataset.v ?? '' }).then((ok) => {
+      if (!ok) toast('Could not reach the armoury. Are you online?');
+      renderProfile();
     });
   });
 
@@ -1003,6 +1358,12 @@ function wire() {
 };
 
 wire();
+account.onChange = updateAccountUI;
+updateAccountUI();
+void account.refresh().then(async () => {
+  const ids = await account.flush();
+  if (ids.length) showHonours(ids);
+});
 buildFactionPicker();
 startDemo();
 const roomParam = new URLSearchParams(location.search).get('room');

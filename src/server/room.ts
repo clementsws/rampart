@@ -1,13 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
+import { recordFor } from '../shared/career';
 import { AI_NAMES, DEFAULT_ROUNDS, FACTIONS, TICK, validFaction } from '../shared/constants';
 import { Game } from '../shared/engine';
 import { ClientMsg, Encoder, LobbyInfo, ServerMsg, encodeStatic } from '../shared/protocol';
-import { Difficulty } from '../shared/types';
-
-export interface Env {
-  ROOMS: DurableObjectNamespace;
-  ASSETS: Fetcher;
-}
+import { DEFAULT_LOOK, Difficulty, Look } from '../shared/types';
+import type { Seat } from './accounts';
+import { Env, accountsOf } from './env';
 
 interface Slot {
   kind: 'open' | 'human' | 'ai';
@@ -18,10 +16,15 @@ interface Slot {
   connected: boolean;
   /** When a human dropped out (ms), for the grace period before a CPU takes over. */
   leftAt: number;
+  /** Account id of a signed-in commander ('' for guests and computers), and their cosmetics. */
+  account: string;
+  look: Look;
 }
 
 interface Client {
   token: string;
+  /** Set once a hello has been received (its account check may still be in flight). */
+  greeted: boolean;
   slot: number;
   /** Simple flood protection: message budget refilled over time. */
   budget: number;
@@ -34,7 +37,17 @@ const LOBBY_GRACE_MS = 30000;
 const IDLE_SHUTDOWN_MS = 90000;
 const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
 
-const openSlot = (): Slot => ({ kind: 'open', name: '', difficulty: 'normal', faction: 0, token: '', connected: false, leftAt: 0 });
+const openSlot = (): Slot => ({
+  kind: 'open',
+  name: '',
+  difficulty: 'normal',
+  faction: 0,
+  token: '',
+  connected: false,
+  leftAt: 0,
+  account: '',
+  look: DEFAULT_LOOK,
+});
 
 function cleanName(v: unknown): string {
   const s = String(v ?? '')
@@ -61,6 +74,10 @@ export class GameRoom extends DurableObject<Env> {
   private encoder: Encoder | null = null;
   /** pid -> slot index for the running game. */
   private gameSlots: number[] = [];
+  /** pid -> account id for the running game, and whether its results have been saved. */
+  private gameAccounts: string[] = [];
+  private gameId = '';
+  private recorded = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastStep = 0;
   private acc = 0;
@@ -75,7 +92,7 @@ export class GameRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
     server.accept();
-    this.clients.set(server, { token: '', slot: -1, budget: 60, lastRefill: Date.now() });
+    this.clients.set(server, { token: '', greeted: false, slot: -1, budget: 60, lastRefill: Date.now() });
     server.addEventListener('message', (ev) => this.onMessage(server, ev.data));
     server.addEventListener('close', () => this.onClose(server));
     server.addEventListener('error', () => this.onClose(server));
@@ -107,7 +124,7 @@ export class GameRoom extends DurableObject<Env> {
   private lobbyInfo(): LobbyInfo {
     return {
       code: this.code,
-      slots: this.slots.map((s) => ({ kind: s.kind, name: s.name, difficulty: s.difficulty, faction: s.faction, connected: s.connected })),
+      slots: this.slots.map((s) => ({ kind: s.kind, name: s.name, title: s.look.title, difficulty: s.difficulty, faction: s.faction, connected: s.connected })),
       host: this.host,
       rounds: this.rounds,
       inGame: !!this.game,
@@ -145,7 +162,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'hello':
-        return this.onHello(ws, c, msg.name, msg.token, msg.faction);
+        return void this.onHello(ws, c, msg);
       case 'ping':
         return this.send(ws, { t: 'pong', c: Number(msg.c) || 0, time: this.game ? this.game.s.time : 0 });
       case 'a': {
@@ -188,6 +205,7 @@ export class GameRoom extends DurableObject<Env> {
         return this.startGame();
       case 'lobby':
         if (c.slot !== this.host || !this.game || this.game.s.phase !== 'gameover') return;
+        this.recordResults();
         this.game = null;
         this.encoder = null;
         this.gameSlots = [];
@@ -206,8 +224,23 @@ export class GameRoom extends DurableObject<Env> {
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
-  private onHello(ws: WebSocket, c: Client, name: string, token: string, faction: unknown) {
-    if (c.token) return; // one seat per connection
+  private async onHello(ws: WebSocket, c: Client, msg: Extract<ClientMsg, { t: 'hello' }>) {
+    if (c.greeted) return; // one seat per connection
+    c.greeted = true;
+    const { token, faction } = msg;
+    // Signed-in commanders play under their account name, wearing what they have earned.
+    let seat: Seat | null = null;
+    if (typeof msg.auth === 'string' && msg.auth) {
+      try {
+        seat = await accountsOf(this.env).seat(msg.auth);
+      } catch {
+        seat = null;
+      }
+      if (!this.clients.has(ws)) return;
+    }
+    const name = seat ? seat.name : cleanName(msg.name);
+    const account = seat?.id ?? '';
+    const look = seat?.look ?? DEFAULT_LOOK;
     const existing = token ? this.slots.findIndex((s) => s.kind === 'human' && s.token === token) : -1;
     if (existing >= 0) {
       // Reconnection: take the slot back from the autopilot.
@@ -225,7 +258,11 @@ export class GameRoom extends DurableObject<Env> {
       }
       s.connected = true;
       s.leftAt = 0;
-      s.name = cleanName(name);
+      s.name = name;
+      if (!this.game || !s.account) {
+        s.account = account;
+        s.look = look;
+      }
       c.token = s.token;
       c.slot = existing;
       if (this.game) {
@@ -243,12 +280,14 @@ export class GameRoom extends DurableObject<Env> {
         if (free >= 0) {
           this.slots[free] = {
             kind: 'human',
-            name: cleanName(name),
+            name,
             difficulty: 'normal',
             faction: faction === undefined ? this.unusedFaction() : validFaction(faction),
             token: c.token,
             connected: true,
             leftAt: 0,
+            account,
+            look,
           };
           c.slot = free;
         }
@@ -292,10 +331,19 @@ export class GameRoom extends DurableObject<Env> {
     const seats = this.slots.map((s, i) => ({ s, i })).filter(({ s }) => s.kind !== 'open');
     if (seats.length < 2) return;
     this.gameSlots = seats.map(({ i }) => i);
+    this.gameAccounts = seats.map(({ s }) => (s.kind === 'human' ? s.account : ''));
+    this.gameId = `${this.code}-${Date.now().toString(36)}`;
+    this.recorded = false;
     this.game = new Game({
       mode: 'versus',
       rounds: this.rounds,
-      players: seats.map(({ s }) => ({ name: s.name, ai: s.kind === 'ai' || !s.connected, difficulty: s.difficulty, faction: s.faction })),
+      players: seats.map(({ s }) => ({
+        name: s.name,
+        ai: s.kind === 'ai' || !s.connected,
+        difficulty: s.difficulty,
+        faction: s.faction,
+        look: s.look,
+      })),
     });
     this.encoder = new Encoder(this.game);
     this.game.drainEvents();
@@ -346,6 +394,8 @@ export class GameRoom extends DurableObject<Env> {
         const delta = this.encoder.delta();
         if (this.clients.size) this.broadcast(delta);
       }
+      // Results are saved once the losers' fate has been decided.
+      if (this.game.s.phase === 'gameover' && this.game.s.execution) this.recordResults();
     }
 
     if (this.clients.size === 0) {
@@ -356,7 +406,31 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
+  /** Saves the finished game to every signed-in commander's career and tells them what they earned. */
+  private recordResults() {
+    const g = this.game;
+    if (!g || this.recorded || g.s.phase !== 'gameover') return;
+    this.recorded = true;
+    const humans = this.gameSlots.filter((i) => this.slots[i]?.kind === 'human').length;
+    const done = new Set<string>();
+    g.s.players.forEach((_, pid) => {
+      const account = this.gameAccounts[pid];
+      if (!account || done.has(account)) return;
+      done.add(account);
+      const rec = recordFor(g.s, pid, 'online', `${this.gameId}-${pid}`, Math.max(0, humans - 1));
+      const slot = this.gameSlots[pid];
+      accountsOf(this.env)
+        .recordOnline(account, rec)
+        .then((ids) => {
+          if (!ids.length) return;
+          for (const [ws, c] of this.clients) if (c.slot === slot && this.slots[slot]?.account === account) this.send(ws, { t: 'honours', ids });
+        })
+        .catch(() => undefined);
+    });
+  }
+
   private shutdown() {
+    this.recordResults();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.game = null;

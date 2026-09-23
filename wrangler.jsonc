@@ -13,7 +13,14 @@
     "run_worker_first": ["/api/*"]
   },
   "durable_objects": {
-    "bindings": [{ "name": "ROOMS", "class_name": "GameRoom" }]
+    "bindings": [
+      { "name": "ROOMS", "class_name": "GameRoom" },
+      // Accounts, careers and honours (one SQLite-backed object for everyone).
+      { "name": "ACCOUNTS", "class_name": "Accounts" }
+    ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GameRoom"] }]
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["GameRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["Accounts"] }
+  ]
 }

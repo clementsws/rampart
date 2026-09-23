@@ -44,7 +44,8 @@
         <div class="go-body">
           <div>
             <p id="go-sub" class="small"></p>
-            <div id="go-standings"></div>
+            <div id="go-report"></div>
+            <div id="go-honours" hidden></div>
             <div id="go-choose" hidden>
               <p id="go-choose-text"></p>
               <div id="go-fates" class="fates"></div>
@@ -67,7 +68,15 @@
         <div>
           <h1 class="title">RAMPART</h1>
           <p class="tag">Build walls. Place cannons. Fire!</p>
-          <label class="field">Your name <input id="in-name" maxlength="16" autocomplete="nickname" placeholder="Knight" /></label>
+          <div id="acct-guest">
+            <label class="field">Your name <input id="in-name" maxlength="16" autocomplete="nickname" placeholder="Knight" /></label>
+            <button type="button" class="link" data-go="screen-account">👤 Sign in or create an account to save your stats</button>
+          </div>
+          <button type="button" id="acct-card" class="acct-card" data-go="screen-profile" hidden>
+            <canvas id="acct-figure"></canvas>
+            <span class="who"><span class="small">Commander</span><b id="acct-name-show"></b><span id="acct-sum" class="small"></span></span>
+            <span class="chev">›</span>
+          </button>
           <div class="field">Your faction <span id="faction-name" class="fname"></span>
             <div id="faction-pick" class="factions"></div>
           </div>
@@ -189,6 +198,37 @@
           <span class="small">Drag &amp; tap: slide pieces like a trackpad and tap to drop. Direct: the piece follows your finger (shown above it) and drops when you lift.</span>
         </div>
         <button class="btn" data-go="back">Back</button>
+      </section>
+
+      <section id="screen-account" class="screen" hidden>
+        <h2>Join the Realm</h2>
+        <div class="seg" data-seg="acct-mode"><button data-v="login" class="on">Sign in</button><button data-v="signup">Create account</button></div>
+        <form id="acct-form" autocomplete="on">
+          <label class="field">Commander name <input id="acct-user" name="username" maxlength="16" autocomplete="username" autocapitalize="words" /></label>
+          <label class="field">Password <input id="acct-pass" name="password" type="password" maxlength="128" autocomplete="current-password" /></label>
+          <p id="acct-msg" class="small" aria-live="polite"></p>
+          <div class="stack">
+            <button class="btn primary" id="acct-submit" type="submit">Sign in</button>
+            <button class="btn" type="button" data-go="back">Back</button>
+          </div>
+        </form>
+        <p class="small">Your wins, stats and honours are saved to your account, so they follow you to any device. Honours unlock titles, victory hats and cannonball trails.</p>
+      </section>
+
+      <section id="screen-profile" class="screen wide" hidden>
+        <div class="prof-head">
+          <canvas id="prof-figure"></canvas>
+          <div>
+            <h2 id="prof-name"></h2>
+            <p id="prof-sub" class="small"></p>
+          </div>
+        </div>
+        <div class="seg tabs" data-seg="prof-tab"><button data-v="record" class="on">Record</button><button data-v="honours">Honours</button><button data-v="armoury">Armoury</button><button data-v="hall">Hall of Fame</button></div>
+        <div id="prof-body"></div>
+        <div class="row">
+          <button class="btn" id="btn-signout">Sign out</button>
+          <button class="btn" data-go="back">Back</button>
+        </div>
       </section>
 
       <section id="screen-pause" class="screen" hidden>

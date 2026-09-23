@@ -22,6 +22,20 @@ If none of your castles are enclosed after a build phase, you're out. In a battl
 
 Scoring: points for walls, cannons and ships you destroy, plus a bonus after each build phase for castles held, enclosed land, captured **bonus squares** (gold gems), and a **clean-territory** bonus when there are no craters or grunts inside your walls.
 
+**The battle report.** When a game ends, everyone's stats are shown side by side (the best in each row in gold): score, castles held, walls destroyed and lost, cannons placed, cannonballs fired, walls hit per shot, cannons wrecked, largest castle area and craters filled. Against the fleet you see ships sunk, hit rate and troops squashed instead.
+
+### Accounts, honours and cosmetics
+
+Create an account (a commander name and a password) from the home screen and your record follows you to any device: games and wins in every mode, best scores, career totals of every stat, and your recent games. Your **profile** has four tabs: *Record*, *Honours*, *Armoury* and a *Hall of Fame* ranking every commander by wins.
+
+There are 23 **honours** (achievements), such as *Wall Breaker* (75 walls in one battle), *Flagship Down*, *Impregnable* (win losing at most 15 walls), *Giant Slayer* (beat three Hard computers at once) and *Cruel and Unusual* (hand out every punishment). Each one unlocks a cosmetic, worn from the Armoury:
+
+- **Titles** shown after your name, in the lobby and the finale ("Sam the Wall-Breaker").
+- **Victory hats** your commander wears in the finale: the admiral's tricorn, a great helm, a horned helm, a laurel wreath, the headsman's hood, a wizard's hat and the fool's cap.
+- **Cannonball trails** that everyone sees online: black powder smoke, Greek fire, gilded sparks and arcane wisps.
+
+Online games are recorded by the server; campaign and computer battles are sent by your browser when the game ends (and queued if you are offline). You can play as a guest without an account, but nothing is saved.
+
 ### Controls
 
 | | Phone / tablet | Desktop |
@@ -38,8 +52,8 @@ In Settings you can switch touch controls to **Direct** mode, where the piece fo
 ## Architecture
 
 ```
-src/shared/   game rules, deterministic engine, AI, map generator, wire protocol (runs in the browser AND the Durable Object)
-src/server/   Cloudflare Worker (routing + static assets) and the GameRoom Durable Object
+src/shared/   game rules, deterministic engine, AI, map generator, wire protocol, careers and honours (runs in the browser AND the Durable Objects)
+src/server/   Cloudflare Worker (routing, accounts API, static assets), the GameRoom and Accounts Durable Objects
 src/client/   canvas renderer, pixel-art sprites, touch/mouse/keyboard input, HUD, sounds
 public/       index.html, CSS, manifest, service worker; the client bundle (app.js) is built here
 test/         vitest unit tests (engine, AI planner, map generation, protocol sync)
@@ -47,6 +61,7 @@ test/         vitest unit tests (engine, AI planner, map generation, protocol sy
 
 - **One Durable Object per room code.** It holds the lobby, runs the authoritative simulation at 20 ticks/s, and streams compact deltas (changed tiles, new cannonballs, events) over WebSockets. Clients animate cannonballs and ships locally between ticks, and show their own wall placements optimistically.
 - **Solo and vs-computer games run entirely in the browser** using the same engine, so they cost nothing on the server and work offline.
+- **Accounts** live in a second SQLite-backed Durable Object (`Accounts`, one instance for everyone). Passwords are hashed with PBKDF2, sessions are random bearer tokens (stored hashed), and repeated wrong passwords lock an account for five minutes. The game rooms look up signed-in players when they join and save each online result when the game ends.
 - **The computer players** choose a target territory, then compute the exact wall tiles needed with a minimum vertex cut (max-flow), which lets them route around craters and reuse old walls. They shovel craters that are in the way, aim at breach points in enemy walls and lead moving ships.
 
 ## Run locally
@@ -95,6 +110,8 @@ To use your own domain, add a **Custom Domain** under the Worker's *Settings →
 
 Each room is one Durable Object instance that exists only while players are connected (it shuts down 90 seconds after everyone leaves). A 4-player game sends roughly 20 small messages per second to each player. That is far inside the free plan's limits for a handful of concurrent players.
 
+Accounts need no extra setup: the `Accounts` Durable Object is created by the `v2` migration in `wrangler.jsonc` on the next deploy. To keep sign-in within the free plan's CPU budget, passwords use 25,000 PBKDF2 rounds (`PBKDF2_ITERATIONS` in `src/server/accounts.ts`); on the paid plan you can raise it, and existing passwords are re-hashed the next time their owner signs in.
+
 ## Tuning
 
-Phase lengths, scoring, cannonball flight (`flightTime`), crater shovels and the campaign's levels, waves and difficulty scaling (`levelDef`) are in `src/shared/constants.ts`. AI skill levels are at the top of `src/shared/ai.ts`. Faction pixel art is in `src/client/factions.ts` and the finale scenes in `src/client/execution.ts`.
+Phase lengths, scoring, cannonball flight (`flightTime`), crater shovels and the campaign's levels, waves and difficulty scaling (`levelDef`) are in `src/shared/constants.ts`. AI skill levels are at the top of `src/shared/ai.ts`. Faction pixel art is in `src/client/factions.ts` and the finale scenes (and victory hats) in `src/client/execution.ts`. Honours, their thresholds and the cosmetics they unlock are in `src/shared/career.ts`.

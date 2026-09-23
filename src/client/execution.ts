@@ -1,7 +1,6 @@
+import { styledName } from '../shared/career';
 import { PLAYER_COLORS } from '../shared/constants';
-import { Execution } from '../shared/types';
-
-export type Hat = 'crown' | 'tricorn';
+import { Execution, Hat, Look } from '../shared/types';
 
 export interface Figure {
   name: string;
@@ -22,7 +21,8 @@ interface Fate {
   dur: number;
   beats: [number, Beat][];
   caption: (name: string) => string;
-  quips: string[];
+  /** One line of courtly wit, addressed to the condemned. */
+  quip: string;
 }
 
 /** The menu of medieval punishments. Scenes are drawn below. */
@@ -41,7 +41,7 @@ export const FATES: Record<Execution, Fate> = {
       [3.6, 'splat'],
     ],
     caption: (n) => `${n} is pelted with tomatoes!`,
-    quips: ['The peasants have excellent aim.', 'Ketchup was invented that very day.', 'Rotten Tomatoes rating: 0%.', 'A cabbage, for good measure.'],
+    quip: "Verily, the peasants' aim is truer than thine.",
   },
   plank: {
     label: 'Walk the plank',
@@ -49,7 +49,7 @@ export const FATES: Record<Execution, Fate> = {
     dur: 4,
     beats: [[2.9, 'splash']],
     caption: (n) => `${n} walks the plank!`,
-    quips: ['The sharks send their thanks.', 'Should have taken swimming lessons.', 'Mind the gap!', 'Glub glub.'],
+    quip: 'Fare thee well, knave! The fishes sup tonight.',
   },
   behead: {
     label: 'Beheading',
@@ -57,7 +57,7 @@ export const FATES: Record<Execution, Fate> = {
     dur: 4,
     beats: [[1.45, 'chop']],
     caption: (n) => `Off with ${n}'s head!`,
-    quips: ['Well, that is one way to lose your head.', 'Heads will roll. Literally.', 'Chin up! Oh… never mind.', 'A cut above the rest.'],
+    quip: 'By royal decree, thy head and shoulders do part.',
   },
   trebuchet: {
     label: 'Trebuchet',
@@ -68,7 +68,7 @@ export const FATES: Record<Execution, Fate> = {
       [3.55, 'ding'],
     ],
     caption: (n) => `${n} is launched by trebuchet!`,
-    quips: ['Frequent flyer miles: earned.', 'Last seen somewhere over France.', 'Physics wins again.', 'Ninety kilos of payload. Mostly ego.'],
+    quip: "Hark! Thou fliest higher than thy walls e'er stood.",
   },
   dragon: {
     label: 'Dragon lunch',
@@ -80,7 +80,7 @@ export const FATES: Record<Execution, Fate> = {
       [3.2, 'burp'],
     ],
     caption: (n) => `${n} is fed to the dragon!`,
-    quips: ['Tastes like chicken, apparently.', 'The dragon rates it two stars.', 'Pardon me!', 'Crunchy on the outside.'],
+    quip: 'The wyrm doth thank thee for thy sacrifice.',
   },
   dunk: {
     label: 'Ducking stool',
@@ -93,7 +93,7 @@ export const FATES: Record<Execution, Fate> = {
       [4.0, 'honk'],
     ],
     caption: (n) => `${n} gets the ducking stool!`,
-    quips: ['Floats! Must be a witch.', 'Bath day came early this year.', 'A duck has claimed the throne.', 'Refreshing!'],
+    quip: 'Thou floatest! Witchcraft, forsooth! Dunk again!',
   },
   jester: {
     label: 'Court jester',
@@ -107,7 +107,7 @@ export const FATES: Record<Execution, Fate> = {
       [3.7, 'honk'],
     ],
     caption: (n) => `${n} is the new court jester!`,
-    quips: ['Honk honk, your majesty.', 'Worst career change ever.', 'The bells! The bells!', 'Juggling is harder than conquest.'],
+    quip: 'Caper, fool! The court demandeth merriment!',
   },
 };
 
@@ -125,7 +125,14 @@ const ease = (v: number) => {
 };
 
 function text(ctx: CanvasRenderingContext2D, s: string, x: number, y: number, size: number, color = '#fff', italic = false) {
-  ctx.font = `${italic ? 'italic ' : ''}bold ${size}px system-ui, sans-serif`;
+  const font = (px: number) => `${italic ? 'italic ' : ''}bold ${px}px system-ui, sans-serif`;
+  ctx.font = font(size);
+  // Long names and titles shrink to fit the scene.
+  const w = ctx.measureText(s).width;
+  if (w > W - 12) {
+    size = Math.max(6, (size * (W - 12)) / w);
+    ctx.font = font(size);
+  }
   ctx.textAlign = 'center';
   ctx.lineWidth = Math.max(2, size / 4);
   ctx.strokeStyle = 'rgba(0,0,0,0.75)';
@@ -213,92 +220,7 @@ export class ExecutionScene {
     }
     ctx.restore();
     text(ctx, fate.caption(victim.name), W / 2, H - 20, 12);
-    text(ctx, fate.quips[(idx + cycle) % fate.quips.length], W / 2, H - 6, 9, '#ffd65a', true);
-  }
-
-  // ------------------------------------------------------------ figures
-
-  private person(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    color: string,
-    opts: { hat?: Hat | 'hood' | 'jester'; walk?: number; noHead?: boolean; kneel?: boolean; laugh?: number } = {},
-  ) {
-    const legSwing = opts.walk ? Math.sin(opts.walk * 12) * 3 : 0;
-    ctx.fillStyle = '#2a2a2a';
-    if (opts.kneel) {
-      ctx.fillRect(x - 5, y - 4, 10, 4);
-    } else {
-      ctx.fillRect(x - 3 + legSwing * 0.5, y - 8, 3, 8);
-      ctx.fillRect(x + 1 - legSwing * 0.5, y - 8, 3, 8);
-    }
-    const bob = opts.laugh ? Math.abs(Math.sin(opts.laugh * 14)) * 1.5 : 0;
-    const bodyY = (opts.kneel ? y - 14 : y - 20) - bob;
-    ctx.fillStyle = color;
-    ctx.fillRect(x - 5, bodyY, 11, 12);
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(x + 3, bodyY, 3, 12);
-    if (opts.noHead) return;
-    this.head(ctx, x, bodyY - 7, opts.hat === 'hood', !!opts.laugh);
-    if (opts.hat === 'crown') this.crown(ctx, x - 4, bodyY - 12);
-    else if (opts.hat === 'tricorn') this.tricorn(ctx, x - 6, bodyY - 11);
-    else if (opts.hat === 'jester') this.jesterHat(ctx, x, bodyY - 7, color, opts.laugh ?? 0);
-  }
-
-  private head(ctx: CanvasRenderingContext2D, x: number, hy: number, hood = false, laughing = false) {
-    ctx.fillStyle = hood ? '#111' : '#f1c9a0';
-    ctx.fillRect(x - 4, hy, 9, 8);
-    ctx.fillStyle = hood ? '#fff' : '#222';
-    if (hood) {
-      ctx.fillRect(x - 2, hy + 3, 2, 1);
-      ctx.fillRect(x + 2, hy + 3, 2, 1);
-    } else {
-      ctx.fillRect(x - 2, hy + 3, 1, 1);
-      ctx.fillRect(x + 2, hy + 3, 1, 1);
-      if (laughing) {
-        ctx.fillStyle = '#7a1a1a';
-        ctx.fillRect(x - 1, hy + 5, 3, 2);
-      }
-    }
-  }
-
-  private crown(ctx: CanvasRenderingContext2D, x: number, y: number) {
-    ctx.fillStyle = '#ffd23a';
-    ctx.fillRect(x, y + 2, 9, 3);
-    ctx.fillRect(x, y, 1, 2);
-    ctx.fillRect(x + 4, y, 1, 2);
-    ctx.fillRect(x + 8, y, 1, 2);
-  }
-
-  private tricorn(ctx: CanvasRenderingContext2D, x: number, y: number) {
-    ctx.fillStyle = '#16161a';
-    ctx.fillRect(x, y + 3, 13, 2);
-    ctx.fillRect(x + 2, y, 9, 4);
-    ctx.fillStyle = '#f2f2f2';
-    ctx.fillRect(x + 5, y + 1, 3, 2);
-    ctx.fillStyle = '#c9a227';
-    ctx.fillRect(x, y + 4, 13, 1);
-  }
-
-  private jesterHat(ctx: CanvasRenderingContext2D, x: number, hy: number, color: string, t: number) {
-    const flop = Math.sin(t * 10) * 2;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x - 4, hy + 1);
-    ctx.lineTo(x - 11, hy - 6 + flop);
-    ctx.lineTo(x, hy - 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffd23a';
-    ctx.beginPath();
-    ctx.moveTo(x + 5, hy + 1);
-    ctx.lineTo(x + 12, hy - 6 - flop);
-    ctx.lineTo(x, hy - 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffd23a';
-    ctx.fillRect(x - 12, hy - 7 + flop, 3, 3);
-    ctx.fillStyle = color;
-    ctx.fillRect(x + 11, hy - 7 - flop, 3, 3);
+    text(ctx, fate.quip, W / 2, H - 6, 9, '#ffd65a', true);
   }
 
   // -------------------------------------------------------------- scenes
@@ -340,7 +262,7 @@ export class ExecutionScene {
     ctx.fillRect(66, 8, 22, 12);
     ctx.fillStyle = '#a0662e';
     ctx.fillRect(140, 90, 90, 4);
-    this.person(ctx, 95, 92, this.winner.color, { hat: this.winner.hat });
+    drawPerson(ctx, 95, 92, this.winner.color, { hat: this.winner.hat });
     ctx.fillStyle = '#ccc';
     ctx.fillRect(101, 76, 16, 2);
     let vx = 110 + Math.min(1, t / 2.4) * 110;
@@ -352,7 +274,7 @@ export class ExecutionScene {
       vy = 92 + ft * ft * 180;
       if (vy > 150) alpha = 0;
     }
-    if (alpha > 0) this.person(ctx, vx, vy, v.color, { hat: v.hat, walk: t < 2.4 ? t : 0 });
+    if (alpha > 0) drawPerson(ctx, vx, vy, v.color, { hat: v.hat, walk: t < 2.4 ? t : 0 });
     if (t > 2.9 && t < 3.9) {
       const st = t - 2.9;
       ctx.fillStyle = `rgba(255,255,255,${1 - st})`;
@@ -381,12 +303,11 @@ export class ExecutionScene {
     ctx.fillStyle = '#8a5a2a';
     ctx.fillRect(150, 124, 34, 3);
     const chopped = t > 1.45;
-    this.person(ctx, 196, 138, v.color, { kneel: true, noHead: true });
+    drawPerson(ctx, 196, 138, v.color, { kneel: true, noHead: true });
     if (!chopped) {
       ctx.fillStyle = '#f1c9a0';
       ctx.fillRect(176, 114, 9, 9);
-      if (v.hat === 'tricorn') this.tricorn(ctx, 174, 109);
-      else this.crown(ctx, 176, 109);
+      drawHat(ctx, v.hat, 180, 114, v.color, 0);
     } else {
       const ht = t - 1.45;
       const hx = 180 - ht * 40;
@@ -403,11 +324,10 @@ export class ExecutionScene {
       ctx.restore();
       const cx = 176 + ht * 50;
       const cy = 100 - ht * 80 + ht * ht * 120;
-      if (v.hat === 'tricorn') this.tricorn(ctx, cx, Math.min(cy, 131));
-      else this.crown(ctx, cx, Math.min(cy, 132));
+      drawHat(ctx, v.hat, cx + 4, Math.min(cy, 132) + 5, v.color, ht);
       if (ht < 0.5) text(ctx, 'CHOP!', 166, 80, 18);
     }
-    this.person(ctx, 140, 138, this.winner.color, { hat: 'hood' });
+    drawPerson(ctx, 140, 138, this.winner.color, { hat: 'hood' });
     let a: number;
     if (t < 1.2) a = -0.4 - (t / 1.2) * 1.8;
     else if (t < 1.45) a = -2.2 + ((t - 1.2) / 0.25) * 2.6;
@@ -462,17 +382,16 @@ export class ExecutionScene {
     const px = 214;
     ctx.fillStyle = '#5e3b1c';
     ctx.fillRect(px - 2, 92, 5, 48);
-    this.person(ctx, px, 140, v.color, { noHead: true });
+    drawPerson(ctx, px, 140, v.color, { noHead: true });
     ctx.fillStyle = '#8a5a2a';
     ctx.fillRect(px - 24, 96, 49, 9);
     ctx.fillStyle = '#6a4020';
     ctx.fillRect(px - 24, 100, 49, 1);
-    this.head(ctx, px, 93);
+    drawHead(ctx, px, 93);
     ctx.fillStyle = '#f1c9a0';
     ctx.fillRect(px - 18, 98, 4, 4);
     ctx.fillRect(px + 15, 98, 4, 4);
-    if (v.hat === 'tricorn') this.tricorn(ctx, px - 6, 88);
-    else this.crown(ctx, px - 4, 88);
+    drawHat(ctx, v.hat, px, 93, v.color, time);
     // Throws: each lands on a fixed time; splats pile up.
     const throws = FATES.tomatoes.beats.map(([bt], i) => {
       const from = 60 + rnd(i, cycle) * 90;
@@ -512,7 +431,7 @@ export class ExecutionScene {
       else ctx.fillRect(cx + 7, 152, 4, 12);
     }
     // The winner, in stitches.
-    this.person(ctx, 280, 140, this.winner.color, { hat: this.winner.hat, laugh: time });
+    drawPerson(ctx, 280, 140, this.winner.color, { hat: this.winner.hat, laugh: time });
     if (Math.sin(time * 6) > 0) text(ctx, 'HA HA!', 280, 104, 9, '#ffe066');
   }
 
@@ -575,7 +494,7 @@ export class ExecutionScene {
       ctx.save();
       ctx.translate(ex, ey + 4);
       ctx.rotate(swing * 2);
-      this.person(ctx, 0, 10, v.color, { hat: v.hat, kneel: true });
+      drawPerson(ctx, 0, 10, v.color, { hat: v.hat, kneel: true });
       ctx.restore();
       if (t > 0.5 && t < 1.05) text(ctx, 'Hold still…', ex + 8, ey - 26, 9);
     } else {
@@ -590,7 +509,7 @@ export class ExecutionScene {
         ctx.translate(p.x, p.y);
         ctx.scale(p.k, p.k);
         ctx.rotate(ft * 8);
-        this.person(ctx, 0, 10, v.color, { hat: v.hat });
+        drawPerson(ctx, 0, 10, v.color, { hat: v.hat });
         ctx.restore();
       }
       const s = 'AAAAaaaa…';
@@ -613,7 +532,7 @@ export class ExecutionScene {
       }
     }
     // The winner cuts the rope.
-    this.person(ctx, 146, 142, this.winner.color, { hat: this.winner.hat, laugh: t > 1.2 ? time : 0 });
+    drawPerson(ctx, 146, 142, this.winner.color, { hat: this.winner.hat, laugh: t > 1.2 ? time : 0 });
     ctx.fillStyle = '#c8ccd2';
     ctx.fillRect(t < 1.0 ? 136 : 132, 124, 6, 2);
     if (t > 0.95 && t < 1.4) text(ctx, 'FIRE!', 150, 100, 12, '#ffe066');
@@ -652,7 +571,7 @@ export class ExecutionScene {
     ctx.fillRect(210, 88, 4, 36);
     const eaten = t > 1.6;
     if (!eaten) {
-      this.person(ctx, 212, 124, v.color, { hat: v.hat });
+      drawPerson(ctx, 212, 124, v.color, { hat: v.hat });
       ctx.fillStyle = '#c9a26a';
       ctx.fillRect(206, 108, 13, 2);
       ctx.fillRect(206, 114, 13, 2);
@@ -742,11 +661,10 @@ export class ExecutionScene {
       ctx.stroke();
       const hx = dx + 36 + bt * 40;
       const hy = Math.min(134, dy - 16 - bt * 50 + bt * bt * 80);
-      if (v.hat === 'tricorn') this.tricorn(ctx, hx, hy);
-      else this.crown(ctx, hx, hy);
+      drawHat(ctx, v.hat, hx + 4, hy + 5, v.color, bt);
       if (bt < 0.8) text(ctx, 'BURP!', dx + 44, dy - 40, 12);
     }
-    this.person(ctx, 50, 140, this.winner.color, { hat: this.winner.hat, laugh: t > 1.8 ? time : 0 });
+    drawPerson(ctx, 50, 140, this.winner.color, { hat: this.winner.hat, laugh: t > 1.8 ? time : 0 });
     if (t < 1.4) {
       ctx.fillStyle = this.winner.color;
       ctx.fillRect(55, 112, 12, 3);
@@ -802,7 +720,7 @@ export class ExecutionScene {
     ctx.fillRect(cx - 7, cy, 14, 4);
     ctx.fillRect(cx + 5, cy - 12, 3, 16);
     const duck = t > 3.8;
-    this.person(ctx, cx - 1, cy + 4, v.color, { hat: duck ? undefined : v.hat, kneel: true });
+    drawPerson(ctx, cx - 1, cy + 4, v.color, { hat: duck ? undefined : v.hat, kneel: true });
     if (duck) {
       // A duck has taken the crown's place.
       const dy = cy - 20;
@@ -832,7 +750,7 @@ export class ExecutionScene {
       }
     }
     // The winner leans on the short end.
-    this.person(ctx, sx - 6, 140, this.winner.color, { hat: this.winner.hat, laugh: t > 1 ? time : 0 });
+    drawPerson(ctx, sx - 6, 140, this.winner.color, { hat: this.winner.hat, laugh: t > 1 ? time : 0 });
     ctx.fillStyle = this.winner.color;
     ctx.fillRect(sx - 4, Math.min(sy, 122), 4, 2);
   }
@@ -865,13 +783,13 @@ export class ExecutionScene {
     ctx.fillRect(38, 82, 30, 50);
     ctx.fillStyle = '#9a2a2a';
     ctx.fillRect(42, 90, 22, 34);
-    this.person(ctx, 53, 132, this.winner.color, { hat: this.winner.hat, laugh: time });
+    drawPerson(ctx, 53, 132, this.winner.color, { hat: this.winner.hat, laugh: time });
     if (Math.sin(time * 5) > -0.2) text(ctx, 'HA HA HA!', 60, 72, 10, '#ffe066');
     // The jester dances and juggles.
     const hop = Math.abs(Math.sin(time * 5)) * 6;
     const jx = 200 + Math.sin(time * 1.5) * 16;
     const pied = t > 3.35;
-    this.person(ctx, jx, 138 - hop, v.color, { hat: 'jester', walk: time * 0.6, laugh: pied ? 0 : time * 0.3 });
+    drawPerson(ctx, jx, 138 - hop, v.color, { hat: 'jester', walk: time * 0.6, laugh: pied ? 0 : time * 0.3 });
     const cols = ['#ff4d5e', '#4f7dff', '#ffd23a'];
     for (let i = 0; i < 3; i++) {
       const ph = time * 5 + (i * Math.PI * 2) / 3;
@@ -900,9 +818,157 @@ export class ExecutionScene {
   }
 }
 
-/** A commander as drawn in the finale. */
-export function figureFor(name: string, id: number): Figure {
-  return { name, color: PLAYER_COLORS[id] ?? '#888', hat: 'crown' };
+/** A commander as drawn in the finale, wearing their title and victory hat. */
+export function figureFor(name: string, id: number, look?: Look): Figure {
+  return { name: styledName(name, look), color: PLAYER_COLORS[id] ?? '#888', hat: look?.hat ?? 'crown' };
+}
+
+// ------------------------------------------------------------ figures
+
+interface PersonOpts {
+  hat?: Hat;
+  walk?: number;
+  noHead?: boolean;
+  kneel?: boolean;
+  laugh?: number;
+}
+
+function drawPerson(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, opts: PersonOpts = {}) {
+  const legSwing = opts.walk ? Math.sin(opts.walk * 12) * 3 : 0;
+  ctx.fillStyle = '#2a2a2a';
+  if (opts.kneel) {
+    ctx.fillRect(x - 5, y - 4, 10, 4);
+  } else {
+    ctx.fillRect(x - 3 + legSwing * 0.5, y - 8, 3, 8);
+    ctx.fillRect(x + 1 - legSwing * 0.5, y - 8, 3, 8);
+  }
+  const bob = opts.laugh ? Math.abs(Math.sin(opts.laugh * 14)) * 1.5 : 0;
+  const bodyY = (opts.kneel ? y - 14 : y - 20) - bob;
+  ctx.fillStyle = color;
+  ctx.fillRect(x - 5, bodyY, 11, 12);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(x + 3, bodyY, 3, 12);
+  if (opts.noHead) return;
+  drawHead(ctx, x, bodyY - 7, !!opts.laugh);
+  if (opts.hat) drawHat(ctx, opts.hat, x, bodyY - 7, color, opts.laugh ?? 0);
+}
+
+function drawHead(ctx: CanvasRenderingContext2D, x: number, hy: number, laughing = false) {
+  ctx.fillStyle = '#f1c9a0';
+  ctx.fillRect(x - 4, hy, 9, 8);
+  ctx.fillStyle = '#222';
+  ctx.fillRect(x - 2, hy + 3, 1, 1);
+  ctx.fillRect(x + 2, hy + 3, 1, 1);
+  if (laughing) {
+    ctx.fillStyle = '#7a1a1a';
+    ctx.fillRect(x - 1, hy + 5, 3, 2);
+  }
+}
+
+/** Headgear for a head whose top-left pixel is (x - 4, hy). */
+function drawHat(ctx: CanvasRenderingContext2D, hat: Hat, x: number, hy: number, color: string, t: number) {
+  const px = (c: string, rx: number, ry: number, w = 1, h = 1) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(x + rx, hy + ry, w, h);
+  };
+  switch (hat) {
+    case 'crown':
+      px('#ffd23a', -4, -3, 9, 3);
+      px('#ffd23a', -4, -5, 1, 2);
+      px('#ffd23a', 0, -5, 1, 2);
+      px('#ffd23a', 4, -5, 1, 2);
+      break;
+    case 'tricorn':
+      px('#16161a', -6, -1, 13, 2);
+      px('#16161a', -4, -4, 9, 4);
+      px('#f2f2f2', -1, -3, 3, 2);
+      px('#c9a227', -6, 0, 13, 1);
+      break;
+    case 'hood':
+      // The headsman's hood: black cloth with eye holes.
+      px('#111', -4, -1, 9, 9);
+      px('#111', -2, -3, 5, 2);
+      px('#fff', -2, 3, 2, 1);
+      px('#fff', 2, 3, 2, 1);
+      break;
+    case 'helm':
+      px('#aab2bd', -5, -2, 11, 10);
+      px('#7d8591', 3, -2, 3, 10);
+      px('#d7dde5', -4, -2, 7, 1);
+      px('#111', -4, 3, 9, 1);
+      px('#111', 1, 5, 1, 1);
+      px('#111', 1, 7, 1, 1);
+      break;
+    case 'horns':
+      px('#8d96a3', -5, -3, 11, 4);
+      px('#b9c1cc', -4, -3, 6, 1);
+      px('#8d96a3', 0, 1, 1, 4);
+      for (const s of [-1, 1]) {
+        const hx = s < 0 ? -7 : 6;
+        px('#f2ead6', hx, -3, 2, 2);
+        px('#f2ead6', hx + s, -5, 2, 2);
+        px('#d9ccaa', hx + s, -7, 2, 2);
+      }
+      break;
+    case 'laurel':
+      px('#2f7a2c', -5, -1, 11, 2);
+      for (let i = 0; i < 5; i++) {
+        px('#5cb85c', -6 + i * 2, -2 - (i % 2), 2, 1);
+        px('#4aa04a', -6, 1 + i, 1, 1);
+        px('#4aa04a', 6, 1 + i, 1, 1);
+      }
+      px('#ffd23a', 0, -2);
+      break;
+    case 'wizard': {
+      ctx.fillStyle = '#2c3e9e';
+      ctx.beginPath();
+      ctx.moveTo(x - 5, hy);
+      ctx.lineTo(x + 6, hy);
+      ctx.lineTo(x + 3, hy - 9);
+      ctx.lineTo(x + 7 + Math.sin(t * 6), hy - 12);
+      ctx.closePath();
+      ctx.fill();
+      px('#22317d', -7, -1, 15, 2);
+      px('#ffd23a', -1, -4);
+      px('#ffd23a', 2, -8);
+      px('#fff6b0', 1, -3);
+      break;
+    }
+    case 'jester': {
+      const flop = Math.sin(t * 10) * 2;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, hy + 1);
+      ctx.lineTo(x - 11, hy - 6 + flop);
+      ctx.lineTo(x, hy - 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffd23a';
+      ctx.beginPath();
+      ctx.moveTo(x + 5, hy + 1);
+      ctx.lineTo(x + 12, hy - 6 - flop);
+      ctx.lineTo(x, hy - 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffd23a';
+      ctx.fillRect(x - 12, hy - 7 + flop, 3, 3);
+      ctx.fillStyle = color;
+      ctx.fillRect(x + 11, hy - 7 - flop, 3, 3);
+      break;
+    }
+  }
+}
+
+/** A commander in their victory hat, for the armoury. */
+export function drawFigurePreview(c: HTMLCanvasElement, color: string, hat: Hat) {
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const size = c.clientWidth || 44;
+  c.width = Math.round(size * dpr);
+  c.height = Math.round(size * dpr);
+  const ctx = c.getContext('2d')!;
+  const k = (size * dpr) / 36;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, 36, 36);
+  drawPerson(ctx, 17, 34, color, { hat });
 }
 
 /** The campaign's villain. */

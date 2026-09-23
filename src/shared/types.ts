@@ -9,6 +9,83 @@ export const EXECUTIONS: readonly Execution[] = ['tomatoes', 'plank', 'behead', 
 export const WATER = 0;
 export const LAND = 1;
 
+/** Per-player tallies for the end-of-game report and career records. */
+export interface PlayerStats {
+  /** Cannonballs fired. */
+  shots: number;
+  /** Shots that struck an enemy wall, cannon, ship or grunt. */
+  hits: number;
+  /** Enemy wall sections destroyed. */
+  walls: number;
+  /** Own wall sections destroyed by anyone. */
+  wallsLost: number;
+  cannons: number;
+  /** Enemy cannons wrecked. */
+  cannonsKilled: number;
+  cannonsLost: number;
+  ships: number;
+  flagships: number;
+  grunts: number;
+  /** Wall pieces laid. */
+  pieces: number;
+  craters: number;
+  /** Times a castle was claimed. */
+  castles: number;
+  /** Most castles held at once, and the largest enclosed area (tiles). */
+  maxCastles: number;
+  maxLand: number;
+  /** Build phases survived. */
+  rounds: number;
+  /** Rounds that earned the clean-territory bonus. */
+  cleanRounds: number;
+  /** Bonus squares held at the end of a round (summed over rounds). */
+  gems: number;
+}
+
+/** Fixed order of the stats on the wire. */
+export const STAT_KEYS: readonly (keyof PlayerStats)[] = [
+  'shots',
+  'hits',
+  'walls',
+  'wallsLost',
+  'cannons',
+  'cannonsKilled',
+  'cannonsLost',
+  'ships',
+  'flagships',
+  'grunts',
+  'pieces',
+  'craters',
+  'castles',
+  'maxCastles',
+  'maxLand',
+  'rounds',
+  'cleanRounds',
+  'gems',
+];
+
+/** Stats that keep a best value rather than a running total. */
+export const PEAK_STATS: readonly (keyof PlayerStats)[] = ['maxCastles', 'maxLand'];
+
+export const emptyStats = (): PlayerStats => Object.fromEntries(STAT_KEYS.map((k) => [k, 0])) as unknown as PlayerStats;
+
+/** Victory headgear: shown on your commander in the finale. */
+export const HATS = ['crown', 'tricorn', 'helm', 'horns', 'laurel', 'hood', 'wizard', 'jester'] as const;
+export type Hat = (typeof HATS)[number];
+
+/** Cannonball trails. */
+export const TRAILS = ['none', 'smoke', 'fire', 'gold', 'arcane'] as const;
+export type Trail = (typeof TRAILS)[number];
+
+/** A commander's cosmetics. `title` is shown after the name ("Sam the Tidy"). */
+export interface Look {
+  title: string;
+  hat: Hat;
+  trail: Trail;
+}
+
+export const DEFAULT_LOOK: Look = { title: '', hat: 'crown', trail: 'none' };
+
 export interface Player {
   id: number;
   name: string;
@@ -36,6 +113,8 @@ export interface Player {
   connected: boolean;
   /** Round in which the player was eliminated (0 = still alive). */
   outRound: number;
+  look: Look;
+  stats: PlayerStats;
 }
 
 export interface Castle {

@@ -1,4 +1,5 @@
 import { AIController } from './ai';
+import { validLook } from './career';
 import {
   AUTOBUILD_TIME,
   BUILD_TIME,
@@ -68,11 +69,13 @@ import {
   GameEvent,
   GameState,
   LAND,
+  Look,
   Mode,
   Phase,
   Player,
   Ship,
   SummaryRow,
+  emptyStats,
 } from './types';
 
 export interface PlayerConfig {
@@ -81,6 +84,8 @@ export interface PlayerConfig {
   difficulty: Difficulty;
   /** Faction index; computer players without one get a faction nobody else uses. */
   faction?: number;
+  /** Unlocked cosmetics (title, victory hat, cannonball trail). */
+  look?: Partial<Look>;
 }
 
 export interface GameConfig {
@@ -146,6 +151,8 @@ export class Game {
         territory: 0,
         connected: true,
         outRound: 0,
+        look: validLook(pc.look),
+        stats: emptyStats(),
       });
     }
     const campaign = cfg.campaign ?? { difficulty: 'normal' as Difficulty };
@@ -409,6 +416,7 @@ export class Game {
       placed.push(i);
     }
     p.pieceSeq++;
+    p.stats.pieces++;
     p.piece = p.next >= 0 ? p.next : this.randomPiece(pid);
     p.next = this.randomPiece(pid);
     p.cursorX = x;
@@ -429,6 +437,7 @@ export class Game {
     s.cannons.push({ id: this.id(), owner: pid, x, y, hp: CANNON_HP, active: true, busy: false, angle: -Math.PI / 2 });
     this.cannonsChanged = true;
     p.cannonsToPlace--;
+    p.stats.cannons++;
     p.cursorX = x;
     p.cursorY = y;
     this.emit({ e: 'cannon', p: pid, x, y });
@@ -454,6 +463,7 @@ export class Game {
     s.rubble[i] = 0;
     this.markDirty(i);
     s.players[pid].fills--;
+    s.players[pid].stats.craters++;
     this.emit({ e: 'fill', p: pid, x: x + 0.5, y: y + 0.5 });
     return true;
   }
@@ -477,6 +487,7 @@ export class Game {
     }
     if (!best) return false;
     best.busy = true;
+    p.stats.shots++;
     best.angle = Math.atan2(ty - (best.y + 1), tx - (best.x + 1));
     this.launch(pid, best.id, best.x + 1, best.y + 1, tx, ty);
     this.emit({ e: 'fire', p: pid, x: best.x + 1, y: best.y + 1 });
@@ -510,6 +521,7 @@ export class Game {
         }
       }
       p.territory = count;
+      if (count > p.stats.maxLand) p.stats.maxLand = count;
     }
     for (let i = 0; i < N; i++) {
       if (next[i] !== s.territory[i]) {
@@ -525,10 +537,14 @@ export class Game {
       if (owner !== c.owner) {
         c.owner = owner;
         this.castlesChanged = true;
-        if (owner >= 0) this.emit({ e: 'castle', p: owner, id: c.id });
+        if (owner >= 0) {
+          s.players[owner].stats.castles++;
+          this.emit({ e: 'castle', p: owner, id: c.id });
+        }
       }
       if (owner >= 0) s.players[owner].castles++;
     }
+    for (const p of s.players) if (p.castles > p.stats.maxCastles) p.stats.maxCastles = p.castles;
     for (const c of s.cannons) {
       const i = c.y * s.W + c.x;
       const active =
@@ -770,6 +786,7 @@ export class Game {
     s.grunts = s.grunts.filter((g) => {
       const t = s.territory[g.y * s.W + g.x];
       if (t >= 0) {
+        s.players[t].stats.grunts++;
         this.addScore(t, SCORE_GRUNT, g.x + 0.5, g.y + 0.5);
         this.emit({ e: 'boom', x: g.x + 0.5, y: g.y + 0.5, kind: 'grunt' });
         return false;
@@ -794,6 +811,9 @@ export class Game {
       const clean = p.territory > 0 && dirtyTiles === 0 ? SCORE_CLEAN : 0;
       const total = castles + territory + bonus + clean;
       p.score += total;
+      p.stats.rounds++;
+      if (clean) p.stats.cleanRounds++;
+      p.stats.gems += bonus / SCORE_BONUS_SQUARE;
       rows.push({ p: p.id, castles, territory, bonus, clean, total });
     }
     s.summary = rows;
@@ -856,6 +876,16 @@ export class Game {
     }
   }
 
+  /** Knocks a wall section down to rubble. */
+  private wallDestroyed(i: number) {
+    const s = this.s;
+    const victim = s.players[s.wall[i]];
+    if (victim) victim.stats.wallsLost++;
+    s.wall[i] = -1;
+    s.rubble[i] = 1;
+    this.markDirty(i);
+  }
+
   private boom(x: number, y: number, kind: BoomKind) {
     this.emit({ e: 'boom', x, y, kind });
   }
@@ -863,14 +893,20 @@ export class Game {
   private impact(b: Ball) {
     const s = this.s;
     const { tx: x, ty: y, owner } = b;
+    const shooter = owner >= 0 ? s.players[owner]?.stats : undefined;
     if (owner >= 0) {
       for (const sh of s.ships) {
         if (sh.sinkT > 0) continue;
         if (Math.hypot(sh.x - x, sh.y - y) < SHIP_RADIUS[sh.kind]) {
           sh.hp--;
+          if (shooter) shooter.hits++;
           this.boom(x, y, 'ship');
           if (sh.hp <= 0) {
             sh.sinkT = s.time;
+            if (shooter) {
+              shooter.ships++;
+              if (sh.kind === SHIP_FLAGSHIP) shooter.flagships++;
+            }
             this.addScore(owner, SCORE_SHIP[sh.kind], sh.x, sh.y);
             this.emit({ e: 'sink', x: sh.x, y: sh.y });
             if (s.solo) s.solo.sunk++;
@@ -886,6 +922,10 @@ export class Game {
     const gi = s.grunts.findIndex((g) => g.x === ix && g.y === iy);
     if (gi >= 0) {
       s.grunts.splice(gi, 1);
+      if (shooter) {
+        shooter.hits++;
+        shooter.grunts++;
+      }
       if (owner >= 0) this.addScore(owner, SCORE_GRUNT, x, y);
       this.boom(x, y, 'grunt');
       return;
@@ -899,9 +939,11 @@ export class Game {
       return;
     }
     if (s.wall[i] >= 0 && s.wall[i] !== owner) {
-      s.wall[i] = -1;
-      s.rubble[i] = 1;
-      this.markDirty(i);
+      this.wallDestroyed(i);
+      if (shooter) {
+        shooter.hits++;
+        shooter.walls++;
+      }
       if (owner >= 0) this.addScore(owner, SCORE_WALL, x, y);
       this.boom(x, y, 'wall');
       return;
@@ -910,8 +952,12 @@ export class Game {
     if (cn && cn.owner !== owner) {
       cn.hp--;
       this.cannonsChanged = true;
+      if (shooter) shooter.hits++;
       this.boom(x, y, 'cannon');
       if (cn.hp <= 0) {
+        if (shooter) shooter.cannonsKilled++;
+        const victim = s.players[cn.owner];
+        if (victim) victim.stats.cannonsLost++;
         s.cannons = s.cannons.filter((c) => c !== cn);
         for (let dy = 0; dy < 2; dy++)
           for (let dx = 0; dx < 2; dx++) {
@@ -1329,9 +1375,7 @@ export class Game {
             if (nx < 0 || ny < 0 || nx >= s.W || ny >= s.H) continue;
             const n = ny * s.W + nx;
             if (s.wall[n] >= 0) {
-              s.wall[n] = -1;
-              s.rubble[n] = 1;
-              this.markDirty(n);
+              this.wallDestroyed(n);
               this.boom(nx + 0.5, ny + 0.5, 'wall');
               break;
             }
