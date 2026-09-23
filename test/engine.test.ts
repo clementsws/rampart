@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { sealingCut } from '../src/shared/ai';
-import { TICK } from '../src/shared/constants';
+import { FACTIONS, FILLS_PER_BUILD, SHIP_FLAGSHIP, TICK, flightTime, levelDef } from '../src/shared/constants';
 import { Game, GameConfig } from '../src/shared/engine';
 import { generateMap } from '../src/shared/mapgen';
 import { PIECE_DEFS, ROTATIONS, UNIQUE_ROTATIONS, pieceCells } from '../src/shared/pieces';
 import { Encoder, applyTick, encodeStatic, stateFromStatic } from '../src/shared/protocol';
 import { canPlacePiece, computeEnclosed, obstacleMap } from '../src/shared/rules';
-import { LAND } from '../src/shared/types';
+import { EXECUTIONS, LAND } from '../src/shared/types';
 
 const cpu = (n: number, difficulty: 'easy' | 'normal' | 'hard' = 'normal') =>
   Array.from({ length: n }, (_, i) => ({ name: `CPU${i}`, ai: true, difficulty }));
@@ -206,7 +206,7 @@ describe('full games with computer players', () => {
       expect(g.s.winner).toBeGreaterThanOrEqual(0);
       expect(g.s.round).toBeLessThanOrEqual(4);
       runUntil(g, () => !!g.s.execution, g.s.time + 10);
-      expect(['plank', 'behead']).toContain(g.s.execution);
+      expect(EXECUTIONS).toContain(g.s.execution);
     });
   }
 
@@ -235,10 +235,167 @@ describe('network protocol', () => {
         expect(Array.from(mirror.crater)).toEqual(Array.from(g.s.crater).map((c) => Math.min(2, c)));
         expect(mirror.castles.map((c) => c.owner)).toEqual(g.s.castles.map((c) => c.owner));
         expect(mirror.cannons.map((c) => [c.id, c.x, c.y, c.hp, c.active])).toEqual(g.s.cannons.map((c) => [c.id, c.x, c.y, c.hp, c.active]));
-        expect(mirror.players.map((p) => [p.score, p.alive, p.piece, p.pieceSeq])).toEqual(g.s.players.map((p) => [p.score, p.alive, p.piece, p.pieceSeq]));
+        expect(mirror.players.map((p) => [p.score, p.alive, p.piece, p.pieceSeq, p.fills, p.faction])).toEqual(
+          g.s.players.map((p) => [p.score, p.alive, p.piece, p.pieceSeq, p.fills, p.faction]),
+        );
         expect(mirror.phase).toBe(g.s.phase);
       }
     }
     expect(checks).toBeGreaterThan(50);
+  });
+});
+
+describe('cannonball flight', () => {
+  it('takes longer the further it flies, and longer in battles than against the fleet', () => {
+    expect(flightTime('versus', 20)).toBeGreaterThan(flightTime('versus', 10) * 1.6);
+    expect(flightTime('versus', 12)).toBeGreaterThan(flightTime('solo', 12));
+    // Even the longest lob lands before the cease-fire wait runs out.
+    expect(flightTime('versus', 80)).toBeLessThanOrEqual(6);
+  });
+});
+
+describe('campaign waves and difficulty', () => {
+  const ships = (d: ReturnType<typeof levelDef>) => d.waves.reduce((a, b) => a + b, 0);
+
+  it('scales the fleet with the difficulty setting', () => {
+    for (let level = 1; level <= 6; level++) {
+      const [easy, normal, hard] = (['easy', 'normal', 'hard'] as const).map((d) => levelDef(level, d));
+      expect(ships(easy)).toBeLessThanOrEqual(ships(normal));
+      expect(ships(normal)).toBeLessThan(ships(hard));
+      expect(easy.fireInterval).toBeGreaterThan(normal.fireInterval);
+      expect(hard.fireInterval).toBeLessThan(normal.fireInterval);
+      expect(easy.boss).toBe(false);
+    }
+    expect(levelDef(6, 'normal').boss).toBe(true);
+    expect(levelDef(3, 'hard').boss).toBe(true);
+  });
+
+  it('keeps getting harder in the endless siege', () => {
+    const a = levelDef(7);
+    const b = levelDef(15);
+    expect(ships(b)).toBeGreaterThan(ships(a));
+    expect(b.fireInterval).toBeLessThan(a.fireInterval);
+  });
+
+  it('sends the fleet in announced waves and brings out the flagship', () => {
+    const g = new Game({ mode: 'solo', seed: 21, campaign: { difficulty: 'hard' }, players: cpu(1, 'hard') });
+    const waves: string[] = [];
+    let flagship = false;
+    while (g.s.phase !== 'gameover' && (g.s.solo?.level ?? 0) <= 3 && g.s.time < 1500) {
+      g.tick(TICK);
+      for (const e of g.drainEvents()) if (e.e === 'wave') waves.push(`${e.level}.${e.wave}/${e.waves}`);
+      if (g.s.ships.some((sh) => sh.kind === SHIP_FLAGSHIP)) flagship = true;
+    }
+    expect(waves.slice(0, 2)).toEqual(['1.1/2', '1.2/2']);
+    expect(waves).toContain('3.3/3');
+    expect(flagship).toBe(true);
+  });
+
+  it('never runs out of levels in the endless siege', () => {
+    const g = new Game({ mode: 'solo', seed: 5, campaign: { difficulty: 'easy', endless: true }, players: cpu(1, 'hard') });
+    runUntil(g, () => g.s.phase === 'gameover' || (g.s.solo?.level ?? 0) > 7, 2500);
+    expect(g.s.phase).not.toBe('gameover');
+    expect(g.s.solo!.level).toBeGreaterThan(7);
+  });
+});
+
+describe('filling craters', () => {
+  function atBuild() {
+    const g = new Game({ mode: 'versus', seed: 31, players: [{ name: 'me', ai: false, difficulty: 'normal' }, ...cpu(1)] });
+    runUntil(g, () => g.s.phase === 'build');
+    const s = g.s;
+    const free: number[] = [];
+    for (let i = 0; i < s.W * s.H; i++) if (s.region[i] === 0 && s.wall[i] < 0 && !obstacleMap(s)[i] && s.terrain[i] === LAND) free.push(i);
+    return { g, s, free };
+  }
+
+  it('shovels your own craters flat, a few per build phase', () => {
+    const { g, s, free } = atBuild();
+    expect(s.players[0].fills).toBe(FILLS_PER_BUILD);
+    const holes = free.slice(0, FILLS_PER_BUILD + 1);
+    for (const i of holes) s.crater[i] = 2;
+    const xy = (i: number) => ({ x: i % s.W, y: Math.floor(i / s.W) });
+    for (const i of holes.slice(0, FILLS_PER_BUILD)) {
+      expect(g.act(0, { type: 'fill', ...xy(i) })).toBe(true);
+      expect(s.crater[i]).toBe(0);
+    }
+    expect(s.players[0].fills).toBe(0);
+    expect(g.act(0, { type: 'fill', ...xy(holes[FILLS_PER_BUILD]) })).toBe(false);
+    expect(s.crater[holes[FILLS_PER_BUILD]]).toBe(2);
+  });
+
+  it("refuses plain ground, a rival's land and the wrong phase", () => {
+    const { g, s, free } = atBuild();
+    const xy = (i: number) => ({ x: i % s.W, y: Math.floor(i / s.W) });
+    expect(g.act(0, { type: 'fill', ...xy(free[0]) })).toBe(false);
+    let theirs = -1;
+    for (let i = 0; i < s.W * s.H; i++) if (s.region[i] === 1 && s.wall[i] < 0) theirs = i;
+    s.crater[theirs] = 2;
+    expect(g.act(0, { type: 'fill', ...xy(theirs) })).toBe(false);
+    expect(g.act(0, { type: 'fill', x: 1.5, y: 2 })).toBe(false);
+    runUntil(g, () => g.s.phase !== 'build');
+    s.crater[free[0]] = 2;
+    expect(g.act(0, { type: 'fill', ...xy(free[0]) })).toBe(false);
+    expect(s.players[0].fills).toBe(0);
+  });
+
+  it('lets the computer use its shovels too', () => {
+    const g = new Game({ mode: 'versus', seed: 1004, rounds: 4, players: cpu(4) });
+    let fills = 0;
+    while (g.s.phase !== 'gameover' && g.s.time < 1500) {
+      g.tick(TICK);
+      for (const e of g.drainEvents()) if (e.e === 'fill') fills++;
+    }
+    expect(fills).toBeGreaterThan(0);
+  });
+});
+
+describe('factions', () => {
+  it('keeps chosen factions and gives computer players different ones', () => {
+    const g = new Game({
+      mode: 'versus',
+      seed: 3,
+      players: [{ name: 'me', ai: false, difficulty: 'normal', faction: 2 }, ...cpu(3)],
+    });
+    const f = g.s.players.map((p) => p.faction);
+    expect(f[0]).toBe(2);
+    expect(new Set(f).size).toBe(4);
+    for (const x of f) {
+      expect(x).toBeGreaterThanOrEqual(0);
+      expect(x).toBeLessThan(FACTIONS.length);
+    }
+  });
+
+  it('sanitises a bogus faction', () => {
+    const g = new Game({ mode: 'versus', seed: 3, players: [{ name: 'x', ai: true, difficulty: 'normal', faction: 99 }, ...cpu(1)] });
+    expect(g.s.players[0].faction).toBe(0);
+  });
+});
+
+describe("the losers' fate", () => {
+  it('lets the winner pick any punishment, but not the losers', () => {
+    for (const method of EXECUTIONS) {
+      const g = new Game({ mode: 'versus', seed: 8, players: [{ name: 'me', ai: false, difficulty: 'normal' }, { name: 'you', ai: false, difficulty: 'normal' }] });
+      (g as unknown as { gameOver(w: number): void }).gameOver(0);
+      expect(g.act(1, { type: 'execute', method })).toBe(false);
+      expect(g.act(0, { type: 'execute', method: 'boil' as never })).toBe(false);
+      expect(g.act(0, { type: 'execute', method })).toBe(true);
+      expect(g.s.execution).toBe(method);
+    }
+  });
+
+  it('has the pirates decide when you lose the campaign, and you decide when you win', () => {
+    const lose = new Game({ mode: 'solo', seed: 8, players: [{ name: 'me', ai: false, difficulty: 'normal' }] });
+    (lose as unknown as { gameOver(w: number): void }).gameOver(-1);
+    expect(lose.act(0, { type: 'execute', method: 'tomatoes' })).toBe(false);
+    runUntil(lose, () => !!lose.s.execution, lose.s.time + 5);
+    expect(EXECUTIONS).toContain(lose.s.execution);
+
+    const win = new Game({ mode: 'solo', seed: 8, players: [{ name: 'me', ai: false, difficulty: 'normal' }] });
+    win.s.solo!.victory = true;
+    (win as unknown as { gameOver(w: number): void }).gameOver(0);
+    runUntil(win, () => false, win.s.time + 5);
+    expect(win.s.execution).toBeNull();
+    expect(win.act(0, { type: 'execute', method: 'dragon' })).toBe(true);
   });
 });

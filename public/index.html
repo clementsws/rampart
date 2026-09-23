@@ -34,6 +34,7 @@
       <div id="controls">
         <button id="btn-zoom" class="round" aria-label="Zoom">🔍</button>
         <div id="next-wrap"><span>NEXT</span><canvas id="next-piece"></canvas></div>
+        <div id="fill-count" title="Craters you can still fill: tap one"></div>
         <div id="cannon-count"></div>
         <button id="btn-rotate" class="round big" aria-label="Rotate piece">⟳</button>
       </div>
@@ -42,14 +43,13 @@
         <h2 id="go-title"></h2>
         <div class="go-body">
           <div>
+            <p id="go-sub" class="small"></p>
             <div id="go-standings"></div>
             <div id="go-choose" hidden>
-              <p>Your rival is at your mercy. Choose their fate:</p>
-              <div class="row">
-                <button id="btn-plank" class="btn">🏴‍☠️ Walk the plank</button>
-                <button id="btn-behead" class="btn">🪓 Behead</button>
-              </div>
+              <p id="go-choose-text"></p>
+              <div id="go-fates" class="fates"></div>
             </div>
+            <p id="go-wait" hidden></p>
           </div>
           <canvas id="exec-canvas" hidden></canvas>
         </div>
@@ -68,15 +68,41 @@
           <h1 class="title">RAMPART</h1>
           <p class="tag">Build walls. Place cannons. Fire!</p>
           <label class="field">Your name <input id="in-name" maxlength="16" autocomplete="nickname" placeholder="Knight" /></label>
+          <div class="field">Your faction <span id="faction-name" class="fname"></span>
+            <div id="faction-pick" class="factions"></div>
+          </div>
         </div>
         <div class="stack">
-          <button class="btn primary" data-go="campaign">⚓ Campaign vs the Fleet</button>
+          <button class="btn primary" data-go="screen-campaign">⚓ Campaign vs the Fleet</button>
           <button class="btn primary" data-go="screen-battle">⚔️ Battle the Computer</button>
           <button class="btn primary" data-go="screen-online">🌐 Play Online (2-4)</button>
           <div class="row">
             <button class="btn" data-go="screen-howto">How to play</button>
             <button class="btn" data-go="screen-settings">Settings</button>
           </div>
+        </div>
+        </div>
+      </section>
+
+      <section id="screen-campaign" class="screen" hidden>
+        <h2>Campaign vs the Fleet</h2>
+        <div class="cols">
+        <div>
+        <div class="field">Fleet strength
+          <div class="seg" data-seg="camp-diff"><button data-v="easy">Easy</button><button data-v="normal" class="on">Normal</button><button data-v="hard">Hard</button></div>
+          <span class="small" id="camp-diff-note"></span>
+        </div>
+        <div class="field">Mode
+          <div class="seg" data-seg="camp-mode"><button data-v="campaign" class="on">6 Levels</button><button data-v="endless">Endless Siege</button></div>
+          <span class="small" id="camp-mode-note"></span>
+        </div>
+        </div>
+        <div>
+        <p class="small best" id="camp-best"></p>
+        <div class="stack">
+          <button class="btn primary" data-go="campaign">Set sail!</button>
+          <button class="btn" data-go="screen-home">Back</button>
+        </div>
         </div>
         </div>
       </section>
@@ -143,11 +169,12 @@
         <div class="howto cols">
           <p><b>1. Choose a castle.</b> Tap one of the castles in your land. A wall is built around it for you.</p>
           <p><b>2. Place cannons</b> inside your walls. Each castle you hold gives you a cannon each round (your home castle gives two).</p>
-          <p><b>3. Fire!</b> Tap where you want a cannonball to land. Balls are slow, so lead moving ships. Knock holes in enemy walls and wreck their cannons.</p>
+          <p><b>3. Fire!</b> Tap where you want a cannonball to land. Balls are lobbed and slow (long shots fly high and take a while), so make every shot count and lead moving ships. Knock holes in enemy walls and wreck their cannons.</p>
           <p><b>4. Build &amp; repair.</b> Wall pieces appear. <b>Drag anywhere</b> to slide the piece, <b>tap it</b> to drop it, tap elsewhere to jump it there. <b>⟳</b> or a two-finger tap rotates. Close a wall loop around castles to claim them.</p>
-          <p>Anything not fully enclosed after combat is lost, along with its cannons. Craters (from missed shots) block building for a couple of rounds.</p>
-          <p><b>Lose all your castles and you're out.</b> Campaign: survive 6 levels of ships and landing troops. Battle: last player standing, or the highest score after the final round, wins — and decides the loser's fate.</p>
-          <p class="small">Desktop: mouse to aim/move, click to place/fire, right-click or R to rotate, arrow keys + space also work.</p>
+          <p><b>Fill craters.</b> Missed shots leave craters that block building for a couple of rounds. During each repair phase you can <b>tap 3 craters</b> in your land to shovel them flat (⛏️).</p>
+          <p>Anything not fully enclosed after combat is lost, along with its cannons.</p>
+          <p><b>Lose all your castles and you're out.</b> Campaign: survive 6 levels of ships arriving in waves (or see how long you last in the Endless Siege). Battle: last player standing, or the highest score after the final round, wins — and decides the losers' fate. Tomatoes, anyone?</p>
+          <p class="small">Desktop: mouse to aim/move, click to place/fire/fill, right-click or R to rotate, F fills a crater under the piece, arrow keys + space also work.</p>
         </div>
         <button class="btn" data-go="screen-home">Back</button>
       </section>

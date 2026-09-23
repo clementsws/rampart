@@ -115,6 +115,58 @@ export class Sfx {
     if (!this.ok('castle', 200)) return;
     [784, 988, 1175].forEach((f, i) => this.tone(f, 0.12, 0.15, 'triangle', i * 0.07));
   }
+
+  /** Dirt shovelled into a crater. */
+  shovel() {
+    if (!this.ok('shovel', 60)) return;
+    this.burst(0.18, 1800, 300, 0.45, 'bandpass');
+    this.burst(0.12, 400, 90, 0.35);
+  }
+
+  /** War horn: another wave of ships. */
+  horn() {
+    if (!this.ok('horn', 800)) return;
+    this.tone(147, 0.9, 0.16, 'sawtooth', 0, 165);
+    this.tone(220, 0.9, 0.08, 'sawtooth', 0.05, 247);
+  }
+
+  splat() {
+    if (!this.ok('splat', 70)) return;
+    this.burst(0.16, 900, 150, 0.5);
+    this.tone(180, 0.08, 0.12, 'sine', 0, 70);
+  }
+
+  whoosh() {
+    if (!this.ok('whoosh', 200)) return;
+    this.burst(0.7, 300, 3000, 0.3, 'bandpass');
+  }
+
+  ding() {
+    if (!this.ok('ding', 200)) return;
+    this.tone(1760, 0.5, 0.12, 'sine');
+    this.tone(2637, 0.4, 0.06, 'sine', 0.02);
+  }
+
+  roar() {
+    if (!this.ok('roar', 400)) return;
+    this.burst(1.0, 700, 90, 0.7);
+    this.tone(70, 0.9, 0.25, 'sawtooth', 0, 45);
+  }
+
+  burp() {
+    if (!this.ok('burp', 300)) return;
+    this.tone(95, 0.35, 0.3, 'sawtooth', 0, 60);
+  }
+
+  jingle() {
+    if (!this.ok('jingle', 150)) return;
+    [1568, 1976, 2349, 1976].forEach((f, i) => this.tone(f, 0.09, 0.07, 'triangle', i * 0.06));
+  }
+
+  honk() {
+    if (!this.ok('honk', 200)) return;
+    this.tone(330, 0.18, 0.2, 'square', 0, 300);
+  }
 }
 
 export const sfx = new Sfx();

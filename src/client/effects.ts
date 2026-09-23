@@ -82,6 +82,15 @@ export class Effects {
     }
   }
 
+  /** A shovelful of earth landing in a crater. */
+  dust(x: number, y: number) {
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      this.add({ kind: 'debris', x, y, vx: Math.cos(a) * 1.2, vy: Math.sin(a) * 0.8, vz: rnd(1.5, 3), max: rnd(0.4, 0.7), size: rnd(0.08, 0.14), color: i % 2 ? '#8a5a2a' : '#6b4420' });
+    }
+    this.add({ kind: 'smoke', x, y, vy: -0.3, max: 0.7, size: 0.4, color: '#a07850' });
+  }
+
   muzzle(x: number, y: number) {
     this.add({ kind: 'flash', x, y, max: 0.15, size: 0.7, color: '#fff2a8' });
     this.add({ kind: 'smoke', x, y, vy: -0.5, max: 0.8, size: 0.35, color: '#888' });
@@ -114,6 +123,9 @@ export class Effects {
         break;
       case 'grunt':
         this.sparkle(e.x, e.y, '#dfe8b0', 6, 0.5);
+        break;
+      case 'fill':
+        this.dust(e.x, e.y);
         break;
       default:
         break;

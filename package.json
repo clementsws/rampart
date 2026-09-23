@@ -11,7 +11,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
     "check": "npm run typecheck && npm test && npm run build",
-    "sim": "esbuild scripts/sim.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/sim.mjs && node node_modules/.cache/sim.mjs"
+    "sim": "esbuild scripts/sim.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/sim.mjs && node node_modules/.cache/sim.mjs",
+    "campaign-sim": "esbuild scripts/campaign-sim.ts --bundle --platform=node --format=esm --log-level=warning --outfile=node_modules/.cache/campaign-sim.mjs && node node_modules/.cache/campaign-sim.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260921.1",

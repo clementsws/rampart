@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { AI_NAMES, DEFAULT_ROUNDS, TICK } from '../shared/constants';
+import { AI_NAMES, DEFAULT_ROUNDS, FACTIONS, TICK, validFaction } from '../shared/constants';
 import { Game } from '../shared/engine';
 import { ClientMsg, Encoder, LobbyInfo, ServerMsg, encodeStatic } from '../shared/protocol';
 import { Difficulty } from '../shared/types';
@@ -13,6 +13,7 @@ interface Slot {
   kind: 'open' | 'human' | 'ai';
   name: string;
   difficulty: Difficulty;
+  faction: number;
   token: string;
   connected: boolean;
   /** When a human dropped out (ms), for the grace period before a CPU takes over. */
@@ -33,7 +34,7 @@ const LOBBY_GRACE_MS = 30000;
 const IDLE_SHUTDOWN_MS = 90000;
 const DIFFS: Difficulty[] = ['easy', 'normal', 'hard'];
 
-const openSlot = (): Slot => ({ kind: 'open', name: '', difficulty: 'normal', token: '', connected: false, leftAt: 0 });
+const openSlot = (): Slot => ({ kind: 'open', name: '', difficulty: 'normal', faction: 0, token: '', connected: false, leftAt: 0 });
 
 function cleanName(v: unknown): string {
   const s = String(v ?? '')
@@ -106,7 +107,7 @@ export class GameRoom extends DurableObject<Env> {
   private lobbyInfo(): LobbyInfo {
     return {
       code: this.code,
-      slots: this.slots.map((s) => ({ kind: s.kind, name: s.name, difficulty: s.difficulty, connected: s.connected })),
+      slots: this.slots.map((s) => ({ kind: s.kind, name: s.name, difficulty: s.difficulty, faction: s.faction, connected: s.connected })),
       host: this.host,
       rounds: this.rounds,
       inGame: !!this.game,
@@ -144,7 +145,7 @@ export class GameRoom extends DurableObject<Env> {
     if (!msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'hello':
-        return this.onHello(ws, c, msg.name, msg.token);
+        return this.onHello(ws, c, msg.name, msg.token, msg.faction);
       case 'ping':
         return this.send(ws, { t: 'pong', c: Number(msg.c) || 0, time: this.game ? this.game.s.time : 0 });
       case 'a': {
@@ -160,10 +161,20 @@ export class GameRoom extends DurableObject<Env> {
         if (!slot || slot.kind === 'human') return;
         if (msg.kind === 'ai') {
           const difficulty = DIFFS.includes(msg.difficulty as Difficulty) ? (msg.difficulty as Difficulty) : 'normal';
-          this.slots[i] = { ...openSlot(), kind: 'ai', name: AI_NAMES[i], difficulty, connected: true };
+          const faction = slot.kind === 'ai' ? slot.faction : this.unusedFaction();
+          this.slots[i] = { ...openSlot(), kind: 'ai', name: AI_NAMES[i], difficulty, faction, connected: true };
         } else {
           this.slots[i] = openSlot();
         }
+        return this.broadcastLobby();
+      }
+      case 'faction': {
+        // Players pick their own faction; the host also decides for the computer players.
+        const i = Number(msg.slot);
+        const slot = this.slots[i];
+        if (!slot || this.game || (i !== c.slot && !(c.slot === this.host && slot.kind === 'ai'))) return;
+        if (slot.kind === 'open') return;
+        slot.faction = validFaction(msg.faction);
         return this.broadcastLobby();
       }
       case 'rounds': {
@@ -188,7 +199,14 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  private onHello(ws: WebSocket, c: Client, name: string, token: string) {
+  private unusedFaction(): number {
+    const used = new Set(this.slots.filter((s) => s.kind !== 'open').map((s) => s.faction));
+    const free = FACTIONS.map((_, i) => i).filter((f) => !used.has(f));
+    const pool = free.length ? free : FACTIONS.map((_, i) => i);
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  private onHello(ws: WebSocket, c: Client, name: string, token: string, faction: unknown) {
     if (c.token) return; // one seat per connection
     const existing = token ? this.slots.findIndex((s) => s.kind === 'human' && s.token === token) : -1;
     if (existing >= 0) {
@@ -223,7 +241,15 @@ export class GameRoom extends DurableObject<Env> {
       if (!this.game) {
         const free = this.slots.findIndex((s) => s.kind === 'open');
         if (free >= 0) {
-          this.slots[free] = { kind: 'human', name: cleanName(name), difficulty: 'normal', token: c.token, connected: true, leftAt: 0 };
+          this.slots[free] = {
+            kind: 'human',
+            name: cleanName(name),
+            difficulty: 'normal',
+            faction: faction === undefined ? this.unusedFaction() : validFaction(faction),
+            token: c.token,
+            connected: true,
+            leftAt: 0,
+          };
           c.slot = free;
         }
       }
@@ -269,7 +295,7 @@ export class GameRoom extends DurableObject<Env> {
     this.game = new Game({
       mode: 'versus',
       rounds: this.rounds,
-      players: seats.map(({ s }) => ({ name: s.name, ai: s.kind === 'ai' || !s.connected, difficulty: s.difficulty })),
+      players: seats.map(({ s }) => ({ name: s.name, ai: s.kind === 'ai' || !s.connected, difficulty: s.difficulty, faction: s.faction })),
     });
     this.encoder = new Encoder(this.game);
     this.game.drainEvents();
