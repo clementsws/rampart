@@ -52,7 +52,10 @@
             </div>
             <p id="go-wait" hidden></p>
           </div>
-          <canvas id="exec-canvas" hidden></canvas>
+          <div id="exec-wrap" hidden>
+            <canvas id="exec-canvas"></canvas>
+            <p id="exec-lore" class="lore"></p>
+          </div>
         </div>
         <div class="row">
           <button id="btn-again" class="btn primary">Play again</button>
@@ -169,6 +172,7 @@
           <button class="btn primary" id="btn-lobby-start">Start game</button>
           <button class="btn" id="btn-leave">Leave room</button>
         </div>
+        <p class="lore" title="Tap for another"><b>📜 Castle lore</b> <span data-lore></span></p>
         </div>
         </div>
       </section>
@@ -185,6 +189,7 @@
           <p><b>Lose all your castles and you're out.</b> Campaign: survive 6 levels of ships arriving in waves (or see how long you last in the Endless Siege). Battle: last player standing, or the highest score after the final round, wins — and decides the losers' fate. Tomatoes, anyone?</p>
           <p class="small">Desktop: mouse to aim/move, click to place/fire/fill, right-click or R to rotate, F fills a crater under the piece, arrow keys + space also work.</p>
         </div>
+        <p class="lore" title="Tap for another"><b>📜 Castle lore</b> <span data-lore></span></p>
         <button class="btn" data-go="screen-home">Back</button>
       </section>
 
@@ -238,6 +243,7 @@
           <button class="btn" data-go="screen-settings">Settings</button>
           <button class="btn" id="btn-pause-quit">Quit to menu</button>
         </div>
+        <p class="lore" title="Tap for another"><b>📜 Castle lore</b> <span data-lore></span></p>
       </section>
     </div>
 

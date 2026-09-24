@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { sealingCut } from '../src/shared/ai';
-import { ACHIEVEMENTS, TITLES, applyRecord, earnedLook, loadCareer, newCareer, parseRecord, recordFor, validAccountName, validLook } from '../src/shared/career';
+import {
+  ACHIEVEMENTS,
+  CPU_TITLES,
+  TITLES,
+  applyRecord,
+  cpuLook,
+  earnedLook,
+  loadCareer,
+  newCareer,
+  parseRecord,
+  recordFor,
+  validAccountName,
+  validLook,
+} from '../src/shared/career';
+import { CASTLE_FACTS, FATE_FACTS, nextFact } from '../src/client/lore';
 import { FACTIONS, FILLS_PER_BUILD, SHIP_FLAGSHIP, TICK, flightTime, levelDef } from '../src/shared/constants';
 import { Game, GameConfig } from '../src/shared/engine';
 import { generateMap } from '../src/shared/mapgen';
@@ -255,6 +269,31 @@ describe('network protocol', () => {
     expect(mirror.players[0].look).toEqual(look);
     expect(mirror.players[1].look).toEqual(validLook(null));
   });
+
+  it('dresses computer commanders, and sends their looks online', () => {
+    const g = new Game({
+      mode: 'versus',
+      seed: 6,
+      players: [
+        { name: 'me', ai: false, difficulty: 'hard' },
+        { name: 'Lady Byte', ai: true, difficulty: 'hard', look: cpuLook(1, 'hard') },
+      ],
+    });
+    expect(g.s.players[1].look).toEqual({ title: 'the Merciless', hat: 'wizard', trail: 'none' });
+    const mirror = stateFromStatic(encodeStatic(g.s));
+    applyTick(mirror, new Encoder(g).full());
+    expect(mirror.players[1].look).toEqual(g.s.players[1].look);
+  });
+});
+
+describe('castle lore', () => {
+  it('keeps every snippet short and deals each fact once before repeating', () => {
+    for (const f of CASTLE_FACTS) expect(f.length).toBeLessThanOrEqual(135);
+    for (const m of EXECUTIONS) expect(FATE_FACTS[m].length).toBeGreaterThan(20);
+    expect(new Set(CASTLE_FACTS).size).toBe(CASTLE_FACTS.length);
+    const seen = new Set(CASTLE_FACTS.map(() => nextFact()));
+    expect(seen.size).toBe(CASTLE_FACTS.length);
+  });
 });
 
 describe('game stats', () => {
@@ -347,6 +386,21 @@ describe('careers and honours', () => {
     expect(earnedLook(look, {})).toEqual({ title: '', hat: 'crown', trail: 'none' });
     expect(earnedLook(look, { spotless: 1, merciless: 1 })).toEqual({ title: 'the Tidy', hat: 'hood', trail: 'none' });
     expect(validLook({ title: 'the Emperor', hat: 'bucket', trail: 'glitter' })).toEqual({ title: '', hat: 'crown', trail: 'none' });
+    // Computer epithets are well formed, but nobody can earn one.
+    expect(validLook({ title: 'the Hapless' }).title).toBe('the Hapless');
+    expect(earnedLook({ title: 'the Hapless', hat: 'horns' }, { spotless: 1 })).toEqual({ title: '', hat: 'crown', trail: 'none' });
+  });
+
+  it('gives each computer seat its own hat and an epithet for its skill', () => {
+    const all = Object.values(CPU_TITLES).flat();
+    expect(new Set(all).size).toBe(all.length);
+    for (const t of all) expect(TITLES).not.toContain(t);
+    for (const d of ['easy', 'normal', 'hard'] as const) {
+      const looks = [0, 1, 2, 3].map((i) => cpuLook(i, d));
+      expect(new Set(looks.map((l) => l.hat)).size).toBe(4);
+      expect(looks.map((l) => l.title)).toEqual(CPU_TITLES[d]);
+    }
+    expect(cpuLook(5, 'easy')).toEqual(cpuLook(1, 'easy'));
   });
 
   it('gives every cosmetic a way to be earned', () => {

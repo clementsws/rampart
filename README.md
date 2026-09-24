@@ -22,6 +22,10 @@ If none of your castles are enclosed after a build phase, you're out. In a battl
 
 Scoring: points for walls, cannons and ships you destroy, plus a bonus after each build phase for castles held, enclosed land, captured **bonus squares** (gold gems), and a **clean-territory** bonus when there are no craters or grunts inside your walls.
 
+**Portraits.** The score bar shows every commander's portrait in their victory hat, with their name and title. The leader chortles, and fallen commanders see stars. Portraits also appear in the lobby, the round tally and the battle report. Computer commanders dress up too: each seat has its own hat (Sir Bot's great helm, Lady Byte's wizard's hat, Baron Cog's horns, Duke Relay's tricorn) and an epithet that gives away its skill, from *the Hapless* to *the Terrible*.
+
+**Castle lore.** Snippets of real castle history turn up in the round tally, the pause menu, the lobby and the rules (tap one for another), such as the forty pigs King John burned to bring down Rochester Castle. Each finale ends with a note from the chronicles about the punishment chosen.
+
 **The battle report.** When a game ends, everyone's stats are shown side by side (the best in each row in gold): score, castles held, walls destroyed and lost, cannons placed, cannonballs fired, walls hit per shot, cannons wrecked, largest castle area and craters filled. Against the fleet you see ships sunk, hit rate and troops squashed instead.
 
 ### Accounts, honours and cosmetics
@@ -30,8 +34,8 @@ Create an account (a commander name and a password) from the home screen and you
 
 There are 23 **honours** (achievements), such as *Wall Breaker* (75 walls in one battle), *Flagship Down*, *Impregnable* (win losing at most 15 walls), *Giant Slayer* (beat three Hard computers at once) and *Cruel and Unusual* (hand out every punishment). Each one unlocks a cosmetic, worn from the Armoury:
 
-- **Titles** shown after your name, in the lobby and the finale ("Sam the Wall-Breaker").
-- **Victory hats** your commander wears in the finale: the admiral's tricorn, a great helm, a horned helm, a laurel wreath, the headsman's hood, a wizard's hat and the fool's cap.
+- **Titles** shown after your name, in the score bar, the lobby and the finale ("Sam the Wall-Breaker").
+- **Victory hats** your commander wears in their portrait and in the finale: the admiral's tricorn, a great helm, a horned helm, a laurel wreath, the headsman's hood, a wizard's hat and the fool's cap.
 - **Cannonball trails** that everyone sees online: black powder smoke, Greek fire, gilded sparks and arcane wisps.
 
 Online games are recorded by the server; campaign and computer battles are sent by your browser when the game ends (and queued if you are offline). You can play as a guest without an account, but nothing is saved.
@@ -114,4 +118,4 @@ Accounts need no extra setup: the `Accounts` Durable Object is created by the `v
 
 ## Tuning
 
-Phase lengths, scoring, cannonball flight (`flightTime`), crater shovels and the campaign's levels, waves and difficulty scaling (`levelDef`) are in `src/shared/constants.ts`. AI skill levels are at the top of `src/shared/ai.ts`. Faction pixel art is in `src/client/factions.ts` and the finale scenes (and victory hats) in `src/client/execution.ts`. Honours, their thresholds and the cosmetics they unlock are in `src/shared/career.ts`.
+Phase lengths, scoring, cannonball flight (`flightTime`), crater shovels and the campaign's levels, waves and difficulty scaling (`levelDef`) are in `src/shared/constants.ts`. AI skill levels are at the top of `src/shared/ai.ts`. Faction pixel art is in `src/client/factions.ts`, the finale scenes, victory hats and portraits in `src/client/execution.ts`, and the castle lore and banner calls in `src/client/lore.ts`. Honours, their thresholds and the cosmetics they unlock are in `src/shared/career.ts`.

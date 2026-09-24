@@ -244,9 +244,9 @@ h2 {
 }
 
 .slot .dot {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
   flex: none;
 }
 
@@ -720,17 +720,58 @@ h2 {
   background: rgba(255, 255, 255, 0.16);
 }
 
-.chip .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
+/* Commander portraits: a pixel-art bust in a frame of the player's colour. */
+.av {
   flex: none;
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--line);
+  border-radius: 7px;
+  background: radial-gradient(circle at 50% 35%, #3a4d78, #141d33 75%);
+  vertical-align: middle;
 }
 
-.chip .nm {
+.av.sm {
+  width: 20px;
+  height: 20px;
+  border-width: 1.5px;
+  border-radius: 5px;
+}
+
+.chip .who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.15;
+}
+
+.chip .nm,
+.chip .ttl {
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 11ch;
+  max-width: 13ch;
+}
+
+.chip .ttl {
+  font-size: 10px;
+}
+
+/* The sole leader chortles. */
+.chip.lead .av {
+  animation: chortle 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes chortle {
+  to {
+    transform: translateY(-2px) rotate(-4deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip.lead .av {
+    animation: none;
+  }
 }
 
 .chip .sc {
@@ -741,6 +782,9 @@ h2 {
 
 .chip.out {
   opacity: 0.45;
+}
+
+.chip.out .nm {
   text-decoration: line-through;
 }
 
@@ -1037,6 +1081,21 @@ h2 {
   vertical-align: bottom;
 }
 
+.report th .av {
+  display: block;
+  margin: 0 0 3px auto;
+}
+
+.report th .pt {
+  display: block;
+  max-width: 12ch;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  font-weight: 400;
+}
+
 .report th .pn {
   display: inline-block;
   max-width: 11ch;
@@ -1094,9 +1153,49 @@ h2 {
   display: block;
   width: 100%;
   aspect-ratio: 16 / 9;
-  margin: 10px 0;
+  margin: 10px 0 0;
   border-radius: 10px;
   image-rendering: pixelated;
+}
+
+/* Castle lore and other snippets of history. */
+.lore {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--gold);
+  border-radius: 6px;
+  background: rgba(242, 183, 5, 0.07);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #d9ccaa;
+  text-align: left;
+}
+
+.lore b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--gold2);
+}
+
+.screen .lore {
+  cursor: pointer;
+}
+
+#gameover p.lore {
+  margin: 8px 0 0;
+  text-align: left;
+}
+
+#summary .lore {
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+#summary .lore b,
+#exec-lore b {
+  display: inline;
+  margin-right: 4px;
 }
 
 #gameover .row {
@@ -1138,9 +1237,50 @@ h2 {
   }
 }
 
+/* When the bar is too crowded for names, the portraits (and scores) carry on alone. */
 @media (max-width: 640px) {
-  .chip .nm {
+  .chip .who {
     display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  #scores.n4 .chip .who {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  #scores.n3 .chip .who {
+    display: none;
+  }
+}
+
+/* Phones held upright: each score sits under its portrait. */
+@media (max-width: 560px) {
+  #scores {
+    gap: 4px;
+  }
+  .chip {
+    position: relative;
+    flex-direction: column;
+    gap: 1px;
+    padding: 2px 4px;
+  }
+  .chip .av {
+    width: 24px;
+    height: 24px;
+    border-width: 1.5px;
+    border-radius: 6px;
+  }
+  .chip .sc {
+    font-size: 8px;
+    line-height: 1.2;
+  }
+  .chip .off {
+    position: absolute;
+    top: 0;
+    right: 1px;
   }
 }
 

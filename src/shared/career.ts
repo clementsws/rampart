@@ -329,6 +329,25 @@ export const TRAIL_NAMES: Record<Trail, string> = {
 
 export const TITLES: readonly string[] = ACHIEVEMENTS.flatMap((a) => (a.reward.title ? [a.reward.title] : []));
 
+/**
+ * Computer commanders' epithets, one per seat, hinting at their skill ("Baron Cog the Hapless").
+ * No honour unlocks these, so people cannot wear them.
+ */
+export const CPU_TITLES: Record<Difficulty, readonly string[]> = {
+  easy: ['the Befuddled', 'the Dithering', 'the Hapless', 'the Unready'],
+  normal: ['the Stout', 'the Shrewd', 'the Stubborn', 'the Bold'],
+  hard: ['the Grim', 'the Merciless', 'the Terrible', 'the Dreadful'],
+};
+const CPU_TITLE_SET = new Set(Object.values(CPU_TITLES).flat());
+/** Seat by seat: Sir Bot's great helm, Lady Byte's wizard's hat, Baron Cog's horns, Duke Relay's tricorn. */
+const CPU_HATS: readonly Hat[] = ['helm', 'wizard', 'horns', 'tricorn'];
+
+/** What the computer commander in a seat wears. */
+export function cpuLook(seat: number, difficulty: Difficulty): Look {
+  const i = ((Math.round(seat) % 4) + 4) % 4;
+  return { title: (CPU_TITLES[difficulty] ?? CPU_TITLES.normal)[i], hat: CPU_HATS[i], trail: DEFAULT_LOOK.trail };
+}
+
 /** The achievement that unlocks a cosmetic (undefined for the free defaults). */
 export function unlockedBy(kind: keyof Reward, value: string): Achievement | undefined {
   return ACHIEVEMENTS.find((a) => a.reward[kind] === value);
@@ -344,7 +363,7 @@ export function isUnlocked(kind: keyof Reward, value: string, honours: Record<st
 export function validLook(l: unknown): Look {
   const o = (l && typeof l === 'object' ? l : {}) as Record<string, unknown>;
   return {
-    title: TITLES.includes(o.title as string) ? (o.title as string) : DEFAULT_LOOK.title,
+    title: TITLES.includes(o.title as string) || CPU_TITLE_SET.has(o.title as string) ? (o.title as string) : DEFAULT_LOOK.title,
     hat: HATS.includes(o.hat as Hat) ? (o.hat as Hat) : DEFAULT_LOOK.hat,
     trail: TRAILS.includes(o.trail as Trail) ? (o.trail as Trail) : DEFAULT_LOOK.trail,
   };

@@ -6,6 +6,7 @@ import {
   TITLES,
   TRAIL_NAMES,
   achievement,
+  cpuLook,
   isUnlocked,
   recordFor,
   styledName,
@@ -17,8 +18,9 @@ import { LobbyInfo, ServerMsg } from '../shared/protocol';
 import { Difficulty, EXECUTIONS, GameEvent, GameState, HATS, Look, Player, TRAILS } from '../shared/types';
 import { AccountClient } from './account';
 import { buzz, sfx } from './audio';
-import { Beat, ExecutionScene, FATES, PIRATE_ADMIRAL, drawFigurePreview, figureFor } from './execution';
+import { Beat, ExecutionScene, FATES, Mood, PIRATE_ADMIRAL, drawFigurePreview, figureFor, portraitUrl } from './execution';
 import { Controller, TouchMode } from './input';
+import { FATE_FACTS, buildCall, nextFact, readyCall } from './lore';
 import { Net } from './net';
 import { Renderer, drawPiecePreview } from './render';
 import { LocalSession, OnlineSession, Session } from './session';
@@ -139,6 +141,7 @@ function setSession(s: Session | null) {
 function show(id: string | null) {
   document.querySelectorAll<HTMLElement>('.screen').forEach((el) => (el.hidden = el.id !== id));
   $('screens').classList.toggle('off', !id);
+  if (id) $(id).querySelectorAll<HTMLElement>('[data-lore]').forEach((el) => (el.textContent = nextFact()));
   if (id) {
     const top = screenStack[screenStack.length - 1];
     if (top !== id) screenStack.push(id);
@@ -293,7 +296,7 @@ function startBattle() {
   const difficulty = (segValue('difficulty') || 'normal') as Difficulty;
   const rounds = Number(segValue('rounds')) || 8;
   const players: GameConfig['players'] = [{ name: playerName(), ai: false, difficulty, faction: settings.faction, look: account.look }];
-  for (let i = 1; i <= n; i++) players.push({ name: AI_NAMES[i], ai: true, difficulty });
+  for (let i = 1; i <= n; i++) players.push({ name: AI_NAMES[i], ai: true, difficulty, look: cpuLook(i, difficulty) });
   startLocal({ mode: 'versus', rounds, players });
 }
 
@@ -379,14 +382,24 @@ function renderLobby() {
   lobby.slots.forEach((s, i) => {
     const row = document.createElement('div');
     row.className = 'slot';
-    const dot = document.createElement('span');
-    dot.className = 'dot';
-    dot.style.background = s.kind === 'open' ? 'transparent' : PLAYER_COLORS[i];
-    dot.style.border = `2px solid ${PLAYER_COLORS[i]}`;
+    // Seated commanders get a portrait in their hat; an open seat is an empty frame.
+    let dot: HTMLElement;
+    if (s.kind === 'open') {
+      dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.border = `2px solid ${PLAYER_COLORS[i]}`;
+    } else {
+      const img = document.createElement('img');
+      img.className = 'av';
+      img.alt = '';
+      img.src = portraitUrl(PLAYER_COLORS[i], HATS.includes(s.hat) ? s.hat : 'crown');
+      img.style.borderColor = PLAYER_COLORS[i];
+      dot = img;
+    }
     const name = document.createElement('span');
     name.className = 'name';
     const tags: string[] = [];
-    if (s.kind === 'human') {
+    if (s.kind !== 'open') {
       name.textContent = s.name;
       if (s.title) {
         const t = document.createElement('span');
@@ -394,11 +407,12 @@ function renderLobby() {
         t.textContent = ` ${s.title}`;
         name.appendChild(t);
       }
+    }
+    if (s.kind === 'human') {
       if (i === lobby!.host) tags.push('host');
       if (i === mySlot) tags.push('you');
       if (!s.connected) tags.push('offline');
     } else if (s.kind === 'ai') {
-      name.textContent = s.name;
       tags.push('CPU');
     } else {
       name.textContent = 'Open seat';
@@ -471,8 +485,8 @@ function renderLobby() {
   let status: string;
   if (lobby.inGame) status = mySlot < 0 ? 'Game in progress — joining as a spectator…' : 'Game in progress…';
   else if (mySlot < 0) status = 'This room is full. You can watch once the game starts.';
-  else if (isHost) status = filled < 2 ? 'Share the code, or add CPU players, then start.' : 'Ready when you are!';
-  else status = 'Waiting for the host to start the game…';
+  else if (isHost) status = filled < 2 ? 'Share the code, or add CPU players, then start.' : 'Ready when you are, my liege!';
+  else status = 'Waiting for the host to sound the horn…';
   $('lobby-status').textContent = status;
 }
 
@@ -491,27 +505,50 @@ function buildChips() {
     chipKey = '';
     return;
   }
-  const key = s.players.map((p) => p.name).join('|');
+  const key = s.players.map((p) => `${p.name}/${p.look.title}/${p.look.hat}`).join('|');
   if (key === chipKey) return;
   chipKey = key;
   wrap.innerHTML = '';
+  wrap.className = `n${s.players.length}`;
   for (const p of s.players) {
+    // Each commander's portrait (in their victory hat), name and title, then the score.
     const c = document.createElement('div');
     c.className = 'chip';
-    c.innerHTML = `<span class="dot" style="background:${PLAYER_COLORS[p.id]}"></span><span class="nm"></span><span class="sc">0</span><span class="off"></span>`;
+    c.innerHTML = `<img class="av" alt=""><span class="who"><span class="nm"></span><span class="ttl"></span></span><span class="sc">0</span><span class="off"></span>`;
+    (c.querySelector('.av') as HTMLElement).style.borderColor = PLAYER_COLORS[p.id];
     (c.querySelector('.nm') as HTMLElement).textContent = p.name;
+    const ttl = c.querySelector('.ttl') as HTMLElement;
+    ttl.textContent = p.look.title;
+    ttl.hidden = !p.look.title;
     wrap.append(c);
   }
+}
+
+/** Portrait image of a player, framed in their colour. */
+function avatarHtml(p: Player, mood: Mood = p.alive ? 'calm' : 'dazed'): string {
+  return `<img class="av sm" alt="" src="${portraitUrl(PLAYER_COLORS[p.id], p.look.hat, mood)}" style="border-color:${PLAYER_COLORS[p.id]}">`;
 }
 
 function updateChips(s: GameState, you: number) {
   buildChips();
   const chips = $('scores').children;
+  // In a battle the sole leader chortles in their portrait; fallen commanders see stars.
+  const alive = s.players.filter((p) => p.alive);
+  const top = Math.max(0, ...alive.map((p) => p.score));
+  const soleLeader = !s.solo && top > 0 && alive.filter((p) => p.score === top).length === 1;
   s.players.forEach((p, i) => {
     const c = chips[i] as HTMLElement | undefined;
     if (!c) return;
     c.classList.toggle('me', i === you);
     c.classList.toggle('out', !p.alive);
+    const lead = soleLeader && p.alive && p.score === top;
+    c.classList.toggle('lead', lead);
+    const mood: Mood = !p.alive ? 'dazed' : lead ? 'laugh' : 'calm';
+    const av = c.querySelector('.av') as HTMLImageElement;
+    if (av.dataset.mood !== mood) {
+      av.dataset.mood = mood;
+      av.src = portraitUrl(PLAYER_COLORS[p.id], p.look.hat, mood);
+    }
     (c.querySelector('.sc') as HTMLElement).textContent = String(p.score);
     (c.querySelector('.off') as HTMLElement).textContent = session?.online && !p.connected ? '⚡' : '';
   });
@@ -637,10 +674,13 @@ function updateHud(sess: Session, dt: number) {
       const rows = s.summary
         .map((r) => {
           const p = s.players[r.p];
-          return `<tr><td><span style="color:${PLAYER_COLORS[r.p]}">■</span> ${escapeHtml(p?.name ?? '')}</td><td>${r.castles}</td><td>${r.territory}</td><td>${r.bonus}</td><td>${r.clean}</td><td class="tot">+${r.total}</td></tr>`;
+          const who = p ? `${avatarHtml(p)} ${escapeHtml(p.name)}` : '';
+          return `<tr><td>${who}</td><td>${r.castles}</td><td>${r.territory}</td><td>${r.bonus}</td><td>${r.clean}</td><td class="tot">+${r.total}</td></tr>`;
         })
         .join('');
-      sum.innerHTML = `<table><tr><th>Round ${s.round}</th><th>Castles</th><th>Land</th><th>Bonus</th><th>Clean</th><th>Total</th></tr>${rows}</table>`;
+      sum.innerHTML =
+        `<table><tr><th>Round ${s.round}</th><th>Castles</th><th>Land</th><th>Bonus</th><th>Clean</th><th>Total</th></tr>${rows}</table>` +
+        `<p class="lore"><b>📜 Castle lore</b> ${escapeHtml(nextFact())}</p>`;
     }
   } else sum.hidden = true;
 
@@ -659,10 +699,10 @@ function phaseBanner(s: GameState, cannons: number) {
       break;
     case 'combat':
       if (s.solo) banner(`LEVEL ${s.solo.level}`, s.ships.length ? 'The fleet regroups…' : 'Enemy fleet approaching');
-      else banner('PREPARE FOR BATTLE', 'Ready your cannons…');
+      else banner('PREPARE FOR BATTLE', readyCall(s.round));
       break;
     case 'build':
-      banner('BUILD & REPAIR', 'Close your walls!');
+      banner('BUILD & REPAIR', buildCall(s.round));
       sfx.fanfare('phase');
       fillHints++;
       break;
@@ -686,6 +726,11 @@ const ELIMINATION_QUIPS = [
   'The peasants are already rioting',
   'Their castle is now a fixer-upper',
   'Game over, man. Game over.',
+  'The ravens have left the tower',
+  'Even the rats have fled',
+  'The court jester saw this coming',
+  'Their moat was more of a puddle',
+  'Their banner now makes a fine tablecloth',
 ];
 
 /** Saves a campaign / endless record; returns true when it beats the previous best. */
@@ -787,7 +832,8 @@ function showGameOver(sess: Session) {
   if (s.execution && execShown !== s.execution) {
     execShown = s.execution;
     const c = $<HTMLCanvasElement>('exec-canvas');
-    c.hidden = false;
+    $('exec-wrap').hidden = false;
+    $('exec-lore').innerHTML = `<b>📜 From the chronicles</b> ${escapeHtml(FATE_FACTS[s.execution])}`;
     $('gameover').classList.add('with-exec');
     execScene?.stop();
     let victims = s.players.filter((p) => p.id !== s.winner).map((p) => figureFor(p.name, p.id, p.look));
@@ -839,7 +885,8 @@ function renderReport(s: GameState, you: number) {
   const head = ranked
     .map((p) => {
       const mark = `${p.id === s.winner && !s.solo ? ' 👑' : ''}${p.alive ? '' : ' ☠'}`;
-      return `<th class="${p.id === you ? 'me' : ''}"><span class="pn"><span style="color:${PLAYER_COLORS[p.id]}">■</span> ${escapeHtml(p.name)}</span>${mark}</th>`;
+      const title = p.look.title ? `<span class="pt ttl">${escapeHtml(p.look.title)}</span>` : '';
+      return `<th class="${p.id === you ? 'me' : ''}">${avatarHtml(p)}<span class="pn">${escapeHtml(p.name)}</span>${mark}${title}</th>`;
     })
     .join('');
   const rows = REPORT.filter((r) => !r.only || r.only === (s.solo ? 'solo' : 'battle'))
@@ -919,7 +966,7 @@ function hideGameOver() {
   execScene = null;
   $('gameover').hidden = true;
   $('gameover').classList.remove('with-exec');
-  $<HTMLCanvasElement>('exec-canvas').hidden = true;
+  $('exec-wrap').hidden = true;
   $('summary').hidden = true;
 }
 
@@ -1189,6 +1236,8 @@ function wire() {
 
   document.addEventListener('click', (e) => {
     sfx.unlock();
+    const lore = (e.target as HTMLElement).closest('.lore')?.querySelector<HTMLElement>('[data-lore]');
+    if (lore) lore.textContent = nextFact();
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-go]');
     if (!el) return;
     const go = el.dataset.go!;

@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { recordFor } from '../shared/career';
+import { cpuLook, recordFor } from '../shared/career';
 import { AI_NAMES, DEFAULT_ROUNDS, FACTIONS, TICK, validFaction } from '../shared/constants';
 import { Game } from '../shared/engine';
 import { ClientMsg, Encoder, LobbyInfo, ServerMsg, encodeStatic } from '../shared/protocol';
@@ -124,7 +124,15 @@ export class GameRoom extends DurableObject<Env> {
   private lobbyInfo(): LobbyInfo {
     return {
       code: this.code,
-      slots: this.slots.map((s) => ({ kind: s.kind, name: s.name, title: s.look.title, difficulty: s.difficulty, faction: s.faction, connected: s.connected })),
+      slots: this.slots.map((s) => ({
+        kind: s.kind,
+        name: s.name,
+        title: s.look.title,
+        hat: s.look.hat,
+        difficulty: s.difficulty,
+        faction: s.faction,
+        connected: s.connected,
+      })),
       host: this.host,
       rounds: this.rounds,
       inGame: !!this.game,
@@ -179,7 +187,7 @@ export class GameRoom extends DurableObject<Env> {
         if (msg.kind === 'ai') {
           const difficulty = DIFFS.includes(msg.difficulty as Difficulty) ? (msg.difficulty as Difficulty) : 'normal';
           const faction = slot.kind === 'ai' ? slot.faction : this.unusedFaction();
-          this.slots[i] = { ...openSlot(), kind: 'ai', name: AI_NAMES[i], difficulty, faction, connected: true };
+          this.slots[i] = { ...openSlot(), kind: 'ai', name: AI_NAMES[i], difficulty, faction, connected: true, look: cpuLook(i, difficulty) };
         } else {
           this.slots[i] = openSlot();
         }

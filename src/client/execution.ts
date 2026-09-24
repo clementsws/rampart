@@ -853,10 +853,24 @@ function drawPerson(ctx: CanvasRenderingContext2D, x: number, y: number, color: 
   if (opts.hat) drawHat(ctx, opts.hat, x, bodyY - 7, color, opts.laugh ?? 0);
 }
 
-function drawHead(ctx: CanvasRenderingContext2D, x: number, hy: number, laughing = false) {
+function drawHead(ctx: CanvasRenderingContext2D, x: number, hy: number, laughing = false, dazed = false) {
   ctx.fillStyle = '#f1c9a0';
   ctx.fillRect(x - 4, hy, 9, 8);
   ctx.fillStyle = '#222';
+  if (dazed) {
+    // Knocked silly: crossed-out eyes and a wobbly mouth.
+    for (const ex of [x - 2, x + 2]) {
+      ctx.fillRect(ex - 1, hy + 2, 1, 1);
+      ctx.fillRect(ex + 1, hy + 2, 1, 1);
+      ctx.fillRect(ex, hy + 3, 1, 1);
+      ctx.fillRect(ex - 1, hy + 4, 1, 1);
+      ctx.fillRect(ex + 1, hy + 4, 1, 1);
+    }
+    ctx.fillRect(x - 1, hy + 6, 1, 1);
+    ctx.fillRect(x, hy + 7, 1, 1);
+    ctx.fillRect(x + 1, hy + 6, 1, 1);
+    return;
+  }
   ctx.fillRect(x - 2, hy + 3, 1, 1);
   ctx.fillRect(x + 2, hy + 3, 1, 1);
   if (laughing) {
@@ -969,6 +983,47 @@ export function drawFigurePreview(c: HTMLCanvasElement, color: string, hat: Hat)
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, 36, 36);
   drawPerson(ctx, 17, 34, color, { hat });
+}
+
+/** How a commander looks in their portrait: `laugh` while leading, `dazed` once their castles have fallen. */
+export type Mood = 'calm' | 'laugh' | 'dazed';
+
+const portraits = new Map<string, string>();
+
+/** Head-and-shoulders portrait (24x24 logical pixels) of a commander in their hat, as a cached image URL. */
+export function portraitUrl(color: string, hat: Hat, mood: Mood = 'calm'): string {
+  const key = `${color}|${hat}|${mood}`;
+  let url = portraits.get(key);
+  if (url) return url;
+  const k = 4;
+  const c = document.createElement('canvas');
+  c.width = c.height = 24 * k;
+  const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  const x = 12;
+  const hy = 11;
+  ctx.fillStyle = color;
+  ctx.fillRect(x - 6, hy + 7, 13, 6);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(x + 4, hy + 7, 3, 6);
+  drawHead(ctx, x, hy, mood === 'laugh', mood === 'dazed');
+  // The hood hides the face, so a fallen headsman shows it by his hood slipping off.
+  if (!(mood === 'dazed' && hat === 'hood')) drawHat(ctx, hat, x, hy, color, 0);
+  if (mood === 'dazed') {
+    // Little stars circling the head.
+    ctx.fillStyle = '#ffd23a';
+    for (const [sx, sy] of [
+      [2, 15],
+      [21, 12],
+    ]) {
+      ctx.fillRect(sx - 1, sy, 3, 1);
+      ctx.fillRect(sx, sy - 1, 1, 3);
+    }
+  }
+  url = c.toDataURL();
+  portraits.set(key, url);
+  return url;
 }
 
 /** The campaign's villain. */

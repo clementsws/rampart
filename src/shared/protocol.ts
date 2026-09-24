@@ -11,8 +11,10 @@ export type SlotKind = 'open' | 'human' | 'ai';
 export interface SlotInfo {
   kind: SlotKind;
   name: string;
-  /** Title earned by a signed-in commander ('' for guests). */
+  /** Title earned by a signed-in commander, or a computer's epithet ('' for guests). */
   title: string;
+  /** Victory hat, shown on the commander's portrait. */
+  hat: Hat;
   difficulty: Difficulty;
   faction: number;
   connected: boolean;
